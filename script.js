@@ -50,7 +50,6 @@ class HaromaKeyboard {
                 isActive: false,
                 lastVowel: null,
                 initialConsonant: null,
-				//characterToInput: null, // 영문 드래그 시 입력할 문자
                 isEnDrag: false // 영문 드래그 여부 플래그
             }
         };
@@ -83,6 +82,303 @@ class HaromaKeyboard {
 	
 	// 모든 이벤트 리스너 등록
     attachEventListeners() {
+        let currentElement = null;  // 현재 포인터 아래의 요소를 추적
+		
+		// 한글 및 영문 레이어 드래그 로직 통합
+        document.addEventListener('pointerdown', e => {
+            const target = e.target;
+            const layer = target.closest('.layer.active');
+			if (!layer || !target.classList.contains('octagon-center')) return;
+			
+			const layerName = layer.dataset.layer;
+            if (layerName === 'KR') {
+                this.state.dragState = { isActive: true, lastVowel: null, initialConsonant: null, isEnDrag: false };
+                this.state.pointerMoved = false;
+                e.preventDefault();
+            } else if (layerName === 'EN') {
+                this.state.dragState = {
+                    isActive: true,
+                    isEnDrag: true,
+                    pointerMoved: false,
+                    startX: e.clientX,
+                    startY: e.clientY
+                };
+                e.preventDefault();
+            }
+        });
+		
+		document.addEventListener('pointermove', e => {
+            if (!this.state.dragState.isActive) return;
+            
+            // 포인터가 조금이라도 움직이면 드래그로 간주
+            if (!this.state.pointerMoved) {
+                 if (this.state.dragState.isEnDrag) {
+                    if(Math.abs(e.clientX - this.state.dragState.startX) > 5 || Math.abs(e.clientY - this.state.dragState.startY) > 5) {
+                        this.state.pointerMoved = true;
+                    }
+                 } else {
+                    this.state.pointerMoved = true;
+                 }
+            }
+
+            const elementUnderPointer = document.elementFromPoint(e.clientX, e.clientY);
+            if (!elementUnderPointer || elementUnderPointer === currentElement) return;
+
+            currentElement = elementUnderPointer;
+            const key = currentElement.dataset.click;
+
+            // 한글 드래그 로직
+            if (!this.state.dragState.isEnDrag) {
+                if (currentElement.classList.contains('octagon-center')) {
+                    const { lastVowel } = this.state.dragState;
+                    if (lastVowel) {
+                        const iotizedVowel = this.IOTIZED_VOWEL_MAP[lastVowel];
+                        if (iotizedVowel) {
+                            this.updateSyllable(iotizedVowel);
+                            this.state.dragState.isActive = false;
+                        }
+                    }
+                } else if (currentElement.matches('[class^="octagon-big"]')) {
+                    if (!this.state.dragState.lastVowel) {
+                        const vowel = this.VOWEL_DRAG_MAP[key];
+                        if (vowel) {
+                            this.handleInput(vowel);
+                            this.state.dragState.lastVowel = vowel;
+                            this.state.dragState.initialConsonant = key;
+                        }
+                    } else {
+                        if (key === this.state.dragState.initialConsonant) return;
+                        const compoundMap = this.COMPOUND_VOWEL_MAP[this.state.dragState.lastVowel];
+                        if (compoundMap && compoundMap[key]) {
+                            const newVowel = compoundMap[key];
+                            this.updateSyllable(newVowel);
+                            if (!this.COMPOUND_VOWEL_MAP[newVowel]) {
+                                this.state.dragState.isActive = false;
+                            }
+                        }
+                    }
+                }
+            // 영문 드래그 로직
+            } else {
+                if (currentElement.matches('[class^="octagon-big"]')) {
+                    const charToInput = this.EN_DRAG_MAP[key];
+                    if (charToInput) {
+                        this.handleInput(charToInput);
+                        this.state.dragState = { isActive: false, isEnDrag: false };
+                    }
+                }
+            }
+        });
+
+        document.addEventListener('pointerup', e => {
+            if (this.state.dragState.isActive) {
+                // 영문 중앙 'i' 클릭 처리
+                if (this.state.dragState.isEnDrag && !this.state.pointerMoved) {
+                    this.handleInput('i');
+                }
+                // 한글 중앙 'ㅡ' 클릭 처리
+                if (!this.state.dragState.isEnDrag && !this.state.pointerMoved) {
+                    this.handleInput('ㅡ');
+                }
+                this.state.dragState = { isActive: false, lastVowel: null, initialConsonant: null, isEnDrag: false };
+                currentElement = null;
+            }
+        });
+
+        this.attachRemainingListeners();
+    }
+	
+	updateSyllable(newVowel) {
+        if (this.state.lastCharInfo && this.state.lastCharInfo.type === 'CV') {
+            const cho = this.state.lastCharInfo.cho;
+            const newChar = this.combineCode(cho, newVowel);
+            this.replaceTextBeforeCursor(1, newChar);
+            this.state.lastCharInfo = { type: 'CV', cho: cho, jung: newVowel };
+        } else {
+            this.replaceTextBeforeCursor(1, newVowel);
+            this.resetComposition();
+        }
+        this.state.dragState.lastVowel = newVowel;
+    }
+	
+	handleInput(char) {
+        if (typeof char !== 'string' || !char.trim() && char !== ' ') return;
+
+        const isKR = this.CHOSUNG.includes(char) || this.JUNGSUNG.includes(char);
+
+        if (this.state.activeLayer === 'KR' && isKR) {
+            this.composeHangul(char);
+        } else {
+            this.resetComposition();
+            let charToInsert = char;
+            if (this.state.activeLayer === 'EN' && this.state.capsLock && /^[a-z]$/.test(char)) {
+                charToInsert = char.toUpperCase();
+            }
+            this.insertAtCursor(charToInsert);
+        }
+    }
+	
+	composeHangul(char) {
+        const last = this.state.lastCharInfo;
+        const isChosung = this.CHOSUNG.includes(char);
+        const isJungsung = this.JUNGSUNG.includes(char);
+
+        const start = this.display.selectionStart;
+        const end = this.display.selectionEnd;
+
+        if (start !== end) {
+            this.resetComposition();
+        }
+
+        if (isChosung) {
+            if (last && last.type === 'CV' && this.JONGSUNG.includes(char)) {
+                const newChar = this.combineCode(last.cho, last.jung, char);
+                this.replaceTextBeforeCursor(1, newChar);
+                this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: char };
+            } else if (last && last.type === 'CVJ' && this.DOUBLE_FINAL[last.jong + char]) {
+                const newJong = this.DOUBLE_FINAL[last.jong + char];
+                const newChar = this.combineCode(last.cho, last.jung, newJong);
+                this.replaceTextBeforeCursor(1, newChar);
+                this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: newJong };
+            } else {
+                this.insertAtCursor(char);
+                this.state.lastCharInfo = { type: 'C', cho: char };
+            }
+        } else if (isJungsung) {
+            if (last && last.type === 'C') {
+                const newChar = this.combineCode(last.cho, char);
+                this.replaceTextBeforeCursor(1, newChar);
+                this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: char };
+            } else if (last && last.type === 'CV' && this.COMPLEX_VOWEL[last.jung + char]) {
+                const newVowel = this.COMPLEX_VOWEL[last.jung + char];
+                const newChar = this.combineCode(last.cho, newVowel);
+                this.replaceTextBeforeCursor(1, newChar);
+                this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: newVowel };
+            } else if (last && last.type === 'CVJ') {
+                const doubleJong = this.REVERSE_DOUBLE_FINAL[last.jong];
+                let char1, char2;
+                if (doubleJong) {
+                    char1 = this.combineCode(last.cho, last.jung, doubleJong[0]);
+                    char2 = this.combineCode(doubleJong[1], char);
+                    this.state.lastCharInfo = { type: 'CV', cho: doubleJong[1], jung: char };
+                } else {
+                    char1 = this.combineCode(last.cho, last.jung);
+                    char2 = this.combineCode(last.jong, char);
+                    this.state.lastCharInfo = { type: 'CV', cho: last.jong, jung: char };
+                }
+                this.replaceTextBeforeCursor(1, char1 + char2);
+            } else {
+                this.insertAtCursor(char);
+                this.resetComposition();
+            }
+        }
+    }
+	
+	combineCode(cho, jung, jong = '') {
+        const ci = this.CHOSUNG.indexOf(cho);
+        const ji = this.JUNGSUNG.indexOf(jung);
+        const joi = this.JONGSUNG.indexOf(jong);
+        if (ci < 0 || ji < 0) return cho + (jung || '') + (jong || '');
+        return String.fromCharCode(0xAC00 + (ci * 21 + ji) * 28 + joi);
+    }
+	
+	// [MODIFIED] 나머지 이벤트 리스너 등록
+    attachRemainingListeners() {
+        document.querySelectorAll('[data-click]').forEach(el => {
+            // [중요] 중앙 팔각형은 통합 드래그 로직을 사용하므로 제외
+            if (el.classList.contains('octagon-center')) return;
+
+            let pointerDown = false;
+            let pointerMoved = false;
+            let startX = 0, startY = 0;
+            let clickTimeout = null;
+
+            el.addEventListener('pointerdown', e => {
+                pointerDown = true;
+                pointerMoved = false;
+                startX = e.clientX;
+                startY = e.clientY;
+            });
+
+            el.addEventListener('pointermove', e => {
+                if (pointerDown && !pointerMoved) {
+                    if (Math.abs(e.clientX - startX) > 10 || Math.abs(e.clientY - startY) > 10) {
+                        pointerMoved = true;
+                    }
+                }
+            });
+
+            el.addEventListener('pointerup', e => {
+                if (pointerMoved) {
+                    this.handleInput(el.dataset.drag || el.dataset.click);
+                }
+                pointerDown = false;
+            });
+
+            el.addEventListener('pointerleave', e => {
+                if (pointerDown && pointerMoved) {
+                    this.handleInput(el.dataset.drag || el.dataset.click);
+                    pointerDown = false;
+                    pointerMoved = false;
+                }
+            });
+
+            el.addEventListener('click', e => {
+                e.preventDefault();
+                if (pointerMoved) return;
+
+                if (!clickTimeout) {
+                    clickTimeout = setTimeout(() => {
+                        this.handleInput(el.dataset.click);
+                        clickTimeout = null;
+                    }, 250);
+                }
+            });
+
+            el.addEventListener('dblclick', e => {
+                e.preventDefault();
+                if (clickTimeout) {
+                    clearTimeout(clickTimeout);
+                    clickTimeout = null;
+                }
+                this.handleInput(el.dataset.dblclick || el.dataset.click);
+            });
+        });
+		
+		// 텍스트 영역(display) 이벤트 (커서 이동 시 조합 상태 초기화)
+        this.display.addEventListener('click', () => this.resetComposition());
+        this.display.addEventListener('keyup', (e) => {
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+                this.resetComposition();
+            }
+        });
+		
+		// 기능 버튼 이벤트
+        document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
+        document.getElementById('space').addEventListener('click', () => this.handleInput(' '));
+        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
+        document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
+        document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
+		document.getElementById('enter').addEventListener('click', () => this.handleEnter());
+        //document.getElementById('enter').addEventListener('click', () => this.handleInput('\n'));
+        
+		// 설정 창 내 버튼 이벤트
+		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
+        document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
+        document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
+        document.getElementById('hand-right').addEventListener('click', () => this.moveKeyboard(10));
+        document.getElementById('position-up').addEventListener('click', () => this.moveKeyboardVertical(-10));
+        document.getElementById('position-down').addEventListener('click', () => this.moveKeyboardVertical(10));
+        
+		// 설정 창 열기/닫기 이벤트
+		document.getElementById('settings-btn').addEventListener('click', () => this.openSettings());
+        document.querySelector('.close-button').addEventListener('click', () => this.closeSettings());
+        window.addEventListener('click', (event) => { if (event.target == this.settingsModal) this.closeSettings(); });
+        this.layerButtons.forEach(btn => btn.addEventListener('click', () => this.switchLayer(btn.dataset.layer)));
+    }
+
+		
+	/*		
         const krLayer = document.querySelector('.layer[data-layer="KR"]');
         if (krLayer) {
             const centerOctagon = krLayer.querySelector('.octagon-center');
@@ -109,7 +405,6 @@ class HaromaKeyboard {
 
             outerOctagons.forEach(el => {
                 el.addEventListener('pointerenter', () => {
-                    //if (!this.state.dragState.isActive) return;
 					if (!this.state.dragState.isActive || this.state.dragState.isEnDrag) return;
                     const currentConsonant = el.dataset.click;
                     
@@ -177,6 +472,7 @@ class HaromaKeyboard {
             });
         }
 		
+		
 		// [추가] 영문 중앙 드래그 시 포인터 이동 감지 리스너
         document.addEventListener('pointermove', e => {
             if (this.state.dragState.isActive && this.state.dragState.isEnDrag) {
@@ -185,123 +481,10 @@ class HaromaKeyboard {
                 }
             }
         });
-		
-        // 포인터 up 이벤트 (모든 드래그 상태를 안전하게 초기화)
-        document.addEventListener('pointerup', () => {
-            if (this.state.dragState.isActive) {
-                // 영문 드래그였고, 포인터가 움직이지 않았으면 클릭으로 간주
-                if (this.state.dragState.isEnDrag && !this.state.dragState.pointerMoved) {
-                    this.handleInput('i');
-                }
-				this.state.dragState = { isActive: false, lastVowel: null, initialConsonant: null, isEnDrag: false };
-            }
-        });
-
-        this.attachRemainingListeners();
     }
-
-    updateSyllable(newVowel) {
-        if (this.state.lastCharInfo && this.state.lastCharInfo.type === 'CV') {
-            const cho = this.state.lastCharInfo.cho;
-            const newChar = this.combineCode(cho, newVowel);
-            this.replaceTextBeforeCursor(1, newChar);
-            this.state.lastCharInfo = { type: 'CV', cho: cho, jung: newVowel };
-        } else {
-            this.replaceTextBeforeCursor(1, newVowel);
-            this.resetComposition();
-        }
-        this.state.dragState.lastVowel = newVowel;
-    }
-
-    // 범용 입력 처리기
-    handleInput(char) {
-        if (typeof char !== 'string' || !char.trim() && char !== ' ') return;
-
-        const isKR = this.CHOSUNG.includes(char) || this.JUNGSUNG.includes(char);
-
-        if (this.state.activeLayer === 'KR' && isKR) {
-            this.composeHangul(char);
-        } else {
-            this.resetComposition();
-            let charToInsert = char;
-            if (this.state.activeLayer === 'EN' && this.state.capsLock && /^[a-z]$/.test(char)) {
-                charToInsert = char.toUpperCase();
-            }
-            this.insertAtCursor(charToInsert);
-        }
-    }
+ 
 	
-	// 한글 조합
-    composeHangul(char) {
-        const last = this.state.lastCharInfo;
-        const isChosung = this.CHOSUNG.includes(char);
-        const isJungsung = this.JUNGSUNG.includes(char);
-        
-        const start = this.display.selectionStart;
-        const end = this.display.selectionEnd;
-
-        if (start !== end) {
-            this.resetComposition();
-        }
-
-        // 자음 입력 처리
-        if (isChosung) {
-            // 종성 결합 (예: '가' + 'ㄱ' -> '각')
-            if (last && last.type === 'CV' && this.JONGSUNG.includes(char)) {
-                const newChar = this.combineCode(last.cho, last.jung, char);
-                this.replaceTextBeforeCursor(1, newChar);
-                this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: char };
-            // 겹받침 결합 (예: '각' + 'ㅅ' -> '갃')
-            } else if (last && last.type === 'CVJ' && this.DOUBLE_FINAL[last.jong + char]) {
-                const newJong = this.DOUBLE_FINAL[last.jong + char];
-                const newChar = this.combineCode(last.cho, last.jung, newJong);
-                this.replaceTextBeforeCursor(1, newChar);
-                this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: newJong };
-            } else {
-                this.insertAtCursor(char);
-                this.state.lastCharInfo = { type: 'C', cho: char };
-            }
-        // 모음 입력 처리
-        } else if (isJungsung) {
-            // 초성 + 모음 결합 (예: 'ㄱ' + 'ㅏ' -> '가')
-            if (last && last.type === 'C') {
-                const newChar = this.combineCode(last.cho, char);
-                this.replaceTextBeforeCursor(1, newChar);
-                this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: char };
-            // 이중모음 결합 (예: '오' + 'ㅏ' -> '와')
-            } else if (last && last.type === 'CV' && this.COMPLEX_VOWEL[last.jung + char]) {
-                const newVowel = this.COMPLEX_VOWEL[last.jung + char];
-                const newChar = this.combineCode(last.cho, newVowel);
-                this.replaceTextBeforeCursor(1, newChar);
-                this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: newVowel };
-            // 종성 분리 후 결합 (예: '각' + 'ㅏ' -> '가' + '가')
-            } else if (last && last.type === 'CVJ') {
-                const doubleJong = this.REVERSE_DOUBLE_FINAL[last.jong];
-                let char1, char2;
-                if (doubleJong) { // 겹받침인 경우 (예: '갃' + 'ㅏ' -> '각사')
-                    char1 = this.combineCode(last.cho, last.jung, doubleJong[0]);
-                    char2 = this.combineCode(doubleJong[1], char);
-                    this.state.lastCharInfo = { type: 'CV', cho: doubleJong[1], jung: char };
-                } else { // 홑받침인 경우 (예: '각' + 'ㅏ' -> '가' + '가')
-                    char1 = this.combineCode(last.cho, last.jung);
-                    char2 = this.combineCode(last.jong, char);
-                    this.state.lastCharInfo = { type: 'CV', cho: last.jong, jung: char };
-                }
-                this.replaceTextBeforeCursor(1, char1 + char2);
-            } else {
-                this.insertAtCursor(char);
-                this.resetComposition();
-            }
-        }
-    }
-
-    combineCode(cho, jung, jong = '') {
-        const ci = this.CHOSUNG.indexOf(cho);
-        const ji = this.JUNGSUNG.indexOf(jung);
-        const joi = this.JONGSUNG.indexOf(jong);
-        if (ci < 0 || ji < 0) return cho + (jung || '') + (jong || '');
-        return String.fromCharCode(0xAC00 + (ci * 21 + ji) * 28 + joi);
-    }
+	
 
     insertAtCursor(text) {
         const start = this.display.selectionStart;
@@ -324,90 +507,9 @@ class HaromaKeyboard {
 
     resetComposition() {
         this.state.lastCharInfo = null;
-    }
-    
-    attachRemainingListeners() {
-        document.querySelectorAll('[data-click]').forEach(el => {
-            // 한글 레이어의 중앙 팔각형은 자체 이벤트 리스너를 사용하므로 제외
-			if (el.closest('.layer[data-layer="KR"]') && el.classList.contains('octagon-center')) return;
-            // 영문 레이어의 중앙 팔각형도 자체 이벤트 리스너를 사용하므로 제외
-            if (el.closest('.layer[data-layer="EN"]') && el.classList.contains('octagon-center')) return;
-			// 중앙 팔각형은 자체 드래그 로직을 가지므로 나머지 리스너에서 제외
-            //if (el.classList.contains('octagon-center')) return;
+    }            
+    */    
 			
-			let startX = 0, startY = 0;
-            el.addEventListener('pointerdown', e => {
-                this.state.isPointerDown = true;
-                this.state.pointerMoved = false;
-                startX = e.clientX; startY = e.clientY;
-            });
-            el.addEventListener('pointermove', e => {
-                if (this.state.isPointerDown && (Math.abs(e.clientX - startX) > 10 || Math.abs(e.clientY - startY) > 10)) this.state.pointerMoved = true;
-            });
-            el.addEventListener('pointerup', e => {
-                if (this.state.pointerMoved) this.handleInput(el.dataset.drag || el.dataset.click);
-                this.state.isPointerDown = false;
-            });
-			// 드래그가 키 영역 밖으로 나가면 드래그를 '종료'하고 문자를 입력
-            el.addEventListener('pointerleave', e => {
-                if (this.state.isPointerDown && this.state.pointerMoved) {
-                    // 해당 키의 드래그 문자를 입력합니다.
-                    this.handleInput(el.dataset.drag || el.dataset.click);
-                    // 드래그 상태를 완전히 초기화하여 중복 입력을 방지
-                    this.state.isPointerDown = false;
-                    this.state.pointerMoved = false;
-                }
-            });
-			
-            el.addEventListener('click', e => {
-                e.preventDefault();
-                if (this.state.pointerMoved) return;
-                if (!this.state.clickTimeout) {
-                    this.state.clickTimeout = setTimeout(() => {
-                        this.handleInput(el.dataset.click);
-                        this.state.clickTimeout = null;
-                    }, 250);
-                }
-            });
-            el.addEventListener('dblclick', e => {
-                e.preventDefault();
-                if (this.state.clickTimeout) {
-                    clearTimeout(this.state.clickTimeout);
-                    this.state.clickTimeout = null;
-                }
-                this.handleInput(el.dataset.dblclick || el.dataset.click);
-            });
-        });
-        
-		// 텍스트 영역(display) 이벤트 (커서 이동 시 조합 상태 초기화)
-        this.display.addEventListener('click', () => this.resetComposition());
-        this.display.addEventListener('keyup', (e) => {
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) this.resetComposition();
-        });
-		
-		// 기능 버튼 이벤트
-        document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        document.getElementById('space').addEventListener('click', () => this.handleInput(' '));
-        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
-        document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
-        document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
-		document.getElementById('enter').addEventListener('click', () => this.handleEnter());
-        //document.getElementById('enter').addEventListener('click', () => this.handleInput('\n'));
-        
-		// 설정 창 내 버튼 이벤트
-		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
-        document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
-        document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
-        document.getElementById('hand-right').addEventListener('click', () => this.moveKeyboard(10));
-        document.getElementById('position-up').addEventListener('click', () => this.moveKeyboardVertical(-10));
-        document.getElementById('position-down').addEventListener('click', () => this.moveKeyboardVertical(10));
-        
-		// 설정 창 열기/닫기 이벤트
-		document.getElementById('settings-btn').addEventListener('click', () => this.openSettings());
-        document.querySelector('.close-button').addEventListener('click', () => this.closeSettings());
-        window.addEventListener('click', (event) => { if (event.target == this.settingsModal) this.closeSettings(); });
-        this.layerButtons.forEach(btn => btn.addEventListener('click', () => this.switchLayer(btn.dataset.layer)));
-    }	
 	
 	// 기능 함수들
     backspace() {
