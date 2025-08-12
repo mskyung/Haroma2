@@ -78,132 +78,13 @@ class HaromaKeyboard {
 			this.state.verticalOffset = parseInt(savedVerticalOffset, 10);
         }
         this.applyKeyboardTransform();
-    }
-	
-	/*// 모든 이벤트 리스너 등록
-    attachEventListeners() {
-        const krLayer = document.querySelector('.layer[data-layer="KR"]');
-        if (krLayer) {
-            const centerOctagon = krLayer.querySelector('.octagon-center');
-            const outerOctagons = krLayer.querySelectorAll('[class^="octagon-big"]');
-
-            if (centerOctagon) {
-                centerOctagon.addEventListener('pointerdown', e => {
-                    this.state.dragState = { isActive: true, lastVowel: null, initialConsonant: null };
-                    this.state.pointerMoved = false; // 자음 드래그 후 모음 입력 시 종성이 추가되는 문제 해결
-					e.preventDefault();
-                });
-
-                centerOctagon.addEventListener('pointerenter', () => {
-                    const { isActive, lastVowel } = this.state.dragState;
-                    if (isActive && lastVowel) {
-                        const iotizedVowel = this.IOTIZED_VOWEL_MAP[lastVowel];
-                        if (iotizedVowel) {
-                            this.updateSyllable(iotizedVowel);
-                            this.state.dragState.isActive = false; // 중앙 복귀는 항상 드래그 종료
-                        }
-                    }
-                });
-            }
-
-            outerOctagons.forEach(el => {
-                el.addEventListener('pointerenter', () => {
-                    //if (!this.state.dragState.isActive) return;
-					if (!this.state.dragState.isActive || this.state.dragState.isEnDrag) return;
-                    const currentConsonant = el.dataset.click;
-                    
-                    if (!this.state.dragState.lastVowel) {
-                        const vowel = this.VOWEL_DRAG_MAP[currentConsonant];
-                        if (vowel) {
-                            this.handleInput(vowel);
-                            this.state.dragState.lastVowel = vowel;
-                            this.state.dragState.initialConsonant = currentConsonant;
-                        }
-                    }
-                    else {
-                        if (currentConsonant === this.state.dragState.initialConsonant) return;
-                        const compoundMap = this.COMPOUND_VOWEL_MAP[this.state.dragState.lastVowel];
-                        if (compoundMap && compoundMap[currentConsonant]) {
-                            const newVowel = compoundMap[currentConsonant];
-                            this.updateSyllable(newVowel);
-                            // 새로 만들어진 모음이 추가 조합이 가능한지 확인
-                            if (!this.COMPOUND_VOWEL_MAP[newVowel]) {
-                                // 'ㅙ', 'ㅞ' 등 추가 조합이 없는 모음이면 드래그 종료
-                                this.state.dragState.isActive = false;
-                            }
-                            // 'ㅘ', 'ㅝ' 등 추가 조합이 가능하면 드래그 상태 유지
-                        }
-                    }
-                });
-            });
-        }
-		
-		// --- [추가] 영문 레이어 드래그 이벤트 처리 ---
-        const enLayer = document.querySelector('.layer[data-layer="EN"]');
-        if (enLayer) {
-            const centerOctagon = enLayer.querySelector('.octagon-center');
-            const outerOctagons = enLayer.querySelectorAll('[class^="octagon-big"]');
-
-            if (centerOctagon) {
-                centerOctagon.addEventListener('pointerdown', e => {
-                    if (this.state.activeLayer !== 'EN') return;
-                    //this.state.dragState = { isActive: true, isEnDrag: true };
-					this.state.dragState = { 
-                        isActive: true, 
-                        isEnDrag: true, 
-                        pointerMoved: false,
-                        startX: e.clientX,
-                        startY: e.clientY
-                    };
-                    e.preventDefault();
-                });
-            }
-
-            outerOctagons.forEach(el => {
-				// 바깥 팔각형 영역에 들어가면 입력할 문자 준비
-                el.addEventListener('pointerenter', () => {
-                    if (!this.state.dragState.isActive || !this.state.dragState.isEnDrag) return;
-                    
-                    const key = el.dataset.click;
-                    const charToInput = this.EN_DRAG_MAP[key];
-                    if (charToInput) {
-                        // 영역에 진입하는 즉시 문자 입력
-                        this.handleInput(charToInput);
-                        // 입력 후 드래그 상태를 즉시 초기화하여 중복 입력을 방지
-                        this.state.dragState = { isActive: false, isEnDrag: false };
-                    }
-                });
-            });
-        }
-		
-		// [추가] 영문 중앙 드래그 시 포인터 이동 감지 리스너
-        document.addEventListener('pointermove', e => {
-            if (this.state.dragState.isActive && this.state.dragState.isEnDrag) {
-                if (!this.state.dragState.pointerMoved && (Math.abs(e.clientX - this.state.dragState.startX) > 10 || Math.abs(e.clientY - this.state.dragState.startY) > 10)) {
-                    this.state.dragState.pointerMoved = true;
-                }
-            }
-        });
-		
-        // 포인터 up 이벤트 (모든 드래그 상태를 안전하게 초기화)
-        document.addEventListener('pointerup', () => {
-            if (this.state.dragState.isActive) {
-                // 영문 드래그였고, 포인터가 움직이지 않았으면 클릭으로 간주
-                if (this.state.dragState.isEnDrag && !this.state.dragState.pointerMoved) {
-                    this.handleInput('i');
-                }
-				this.state.dragState = { isActive: false, lastVowel: null, initialConsonant: null, isEnDrag: false };
-            }
-        });
-
-        this.attachRemainingListeners();
-    }*/
+    }	
 	
 	// 모든 이벤트 리스너 등록
     attachEventListeners() {
         let lastHoveredKey = null; // 드래그 중 마지막으로 지나간 키를 추적
 
-        // --- 한글 레이어 드래그 시작 ---
+        // 한글 레이어 드래그 시작
         const krLayer = document.querySelector('.layer[data-layer="KR"]');
         if (krLayer) {
             const centerOctagon = krLayer.querySelector('.octagon-center');
@@ -217,7 +98,7 @@ class HaromaKeyboard {
             }
         }
 
-        // --- 영문 레이어 드래그 시작 ---
+        // 영문 레이어 드래그 시작
         const enLayer = document.querySelector('.layer[data-layer="EN"]');
         if (enLayer) {
             const centerOctagon = enLayer.querySelector('.octagon-center');
@@ -237,24 +118,21 @@ class HaromaKeyboard {
             }
         }
 		
-        // --- [핵심 수정] 통합된 포인터 이동(드래그) 리스너 ---
-        document.addEventListener('pointermove', e => {
-            // 드래그 상태가 아니면 아무것도 하지 않음
-            if (!this.state.dragState.isActive) return;
+        // 통합된 포인터 이동(드래그) 리스너
+        document.addEventListener('pointermove', e => {            
+            if (!this.state.dragState.isActive) return;  // 드래그 상태가 아니면 아무것도 하지 않음
 
             // 포인터 좌표에 있는 가장 상위 요소 찾기
             const currentElement = document.elementFromPoint(e.clientX, e.clientY);
             if (!currentElement) return;
-
-            // 실제 키(data-click 속성이 있는)를 찾음
-            const targetKey = currentElement.closest('[data-click]');
-
-            // 유효한 키가 아니거나 이전에 처리한 키와 동일하면 무시 (중복 처리 방지)
-            if (!targetKey || targetKey === lastHoveredKey) return;
+            
+            const targetKey = currentElement.closest('[data-click]');  // 실제 키(data-click 속성이 있는)를 찾음
+            
+            if (!targetKey || targetKey === lastHoveredKey) return;  // 유효한 키가 아니거나 이전에 처리한 키와 동일하면 무시 (중복 처리 방지)
             
             lastHoveredKey = targetKey; // 마지막으로 처리한 키 업데이트
 
-            // ** 한글 모음 조합 로직 **
+            // 한글 모음 조합 로직
             if (!this.state.dragState.isEnDrag) {
                 // 중앙으로 돌아온 경우 (이중 모음)
                 if (targetKey.classList.contains('octagon-center')) {
@@ -292,10 +170,9 @@ class HaromaKeyboard {
                     }
                 }
             } 
-            // ** 영문 드래그 입력 로직 **
+            // 영문 드래그 입력 로직
             else {
-                 if (targetKey.classList.contains('octagon-center')) {
-                    // 영문 입력에서는 중앙 복귀 시 아무것도 하지 않음
+                 if (targetKey.classList.contains('octagon-center')) {  // 영문 입력에서는 중앙 복귀 시 아무것도 하지 않음
                  } else {
                     const key = targetKey.dataset.click;
                     const charToInput = this.EN_DRAG_MAP[key];
@@ -307,10 +184,9 @@ class HaromaKeyboard {
             }
         });
 
-        // --- [수정] 포인터 up 이벤트 (모든 드래그 상태를 안전하게 초기화) ---
-        document.addEventListener('pointerup', () => {
-            // 드래그 상태였는지 확인
-            if (this.state.dragState.isActive) {
+        // 포인터 up 이벤트 (모든 드래그 상태를 안전하게 초기화)
+        document.addEventListener('pointerup', () => {            
+            if (this.state.dragState.isActive) {  // 드래그 상태였는지 확인
                 // 영문 드래그였고, 포인터가 거의 움직이지 않았으면 'i' 클릭으로 간주
                 if (this.state.dragState.isEnDrag) {
                     const moved = Math.abs(event.clientX - this.state.dragState.startX) > 10 || Math.abs(event.clientY - this.state.dragState.startY) > 10;
@@ -459,8 +335,6 @@ class HaromaKeyboard {
 			if (el.closest('.layer[data-layer="KR"]') && el.classList.contains('octagon-center')) return;
             // 영문 레이어의 중앙 팔각형도 자체 이벤트 리스너를 사용하므로 제외
             if (el.closest('.layer[data-layer="EN"]') && el.classList.contains('octagon-center')) return;
-			// 중앙 팔각형은 자체 드래그 로직을 가지므로 나머지 리스너에서 제외
-            //if (el.classList.contains('octagon-center')) return;
 			
 			let startX = 0, startY = 0;
             el.addEventListener('pointerdown', e => {
