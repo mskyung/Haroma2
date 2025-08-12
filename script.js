@@ -360,7 +360,7 @@ class HaromaKeyboard {
         });
 		
         document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        document.getElementById('space').addEventListener('click', () => this.handleInput(' '));
+        //document.getElementById('space').addEventListener('click', () => this.handleInput(' '));
         document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
         document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
         document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
