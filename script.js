@@ -5,7 +5,6 @@ const DOUBLE_TAP_MS = 250;    // 더블탭(마침표) 판정
 
 class HaromaKeyboard {
     constructor(options) {
-        // 주요 DOM 요소
         this.display = document.getElementById(options.displayId);
         this.displayContainer = document.getElementById(options.displayContainerId);
         this.keyboardContainer = document.getElementById(options.keyboardContainerId);
@@ -53,14 +52,14 @@ class HaromaKeyboard {
             'ㅘ': { 'ㅇ': 'ho' },
             'ㅝ': { 'ㄷ': 'np' }
         };
-        
+
         this.KEY_POSITION_TO_CONSONANT = {
             'octagon-big1': 'ㄱ', 'octagon-big2': 'ㄴ', 'octagon-big3': 'ㄷ', 'octagon-big4': 'ㅁ',
             'octagon-big5': 'ㅂ', 'octagon-big6': 'ㅅ', 'octagon-big7': 'ㅇ', 'octagon-big8': 'ㅈ'
         };
 
 		this.EN_DRAG_MAP = { 'h': 'a', 'd': 'e', 's': 'o', 'b': 'u', 'n': 'y', 'g': 'w' };
-        
+
         this.state = {
             lastCharInfo: null, capsLock: false, scale: 1.0, activeLayer: 'KR',
             isPointerDown: false, pointerMoved: false, clickTimeout: null,
@@ -92,7 +91,7 @@ class HaromaKeyboard {
         if (savedVerticalOffset) this.state.verticalOffset = parseInt(savedVerticalOffset, 10);
         this.applyKeyboardTransform();
     }
-	
+
     attachEventListeners() {
         let lastHoveredKey = null;
 		const isInCenter = (x, y) => {
@@ -109,25 +108,22 @@ class HaromaKeyboard {
             centerOctagon.addEventListener('pointerdown', e => {
 				this.state.tapState.centerPressed = true;
 				this.state.tapState.longPressFired = false;
-				this.state.tapState.centerDragHasExited = false; //추가시
+				this.state.tapState.centerDragHasExited = false;
 				this.state.dragState = {
 					isActive: true,
 					startX: e.clientX,
 					startY: e.clientY,
-				};												//추가종
-				//this.state.dragState.startX = e.clientX;
-				//this.state.dragState.startY = e.clientY;
-				
+				};
 				// 길게누름 타이머
 				clearTimeout(this._centerLongTimer);
 				this._centerLongTimer = setTimeout(() => {
 					// 드래그로 넘어가거나 이미 처리되었으면 무시
 					if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
-					this.insertAtCursor('\n');          // 엔터
+					this.insertAtCursor('\n');
 					this.resetComposition();
 					this.state.tapState.longPressFired = true;
 				}, LONG_PRESS_MS);
-				
+
                 if (this.state.activeLayer !== layerName) return;
                 this.state.dragState = {
                     isActive: true, conceptualVowel: null, lastOutput: null,
@@ -142,17 +138,17 @@ class HaromaKeyboard {
         setupDragListener('KR');
         setupDragListener('K-E');
         setupDragListener('EN', true);
-		
+
         document.addEventListener('pointermove', e => {
 			const dx = e.clientX - this.state.dragState.startX;
 			const dy = e.clientY - this.state.dragState.startY;
 			const movedDist = Math.hypot(dx, dy);
-			
+
 			if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
 
 			// 한번이라도 센터 밖으로 나가면 플래그 ON
 			if (!this.state.tapState.centerDragHasExited && !isInCenter(e.clientX, e.clientY)) {
-				this.state.tapState.centerDragHasExited = true;   // ☆ 밖으로 나감
+				this.state.tapState.centerDragHasExited = true;   //밖으로 나감
 			}
 			
 			// 중앙키 누른 상태에서 충분히 움직이면 = 드래그 시작 → 길게누름 취소
@@ -260,18 +256,8 @@ class HaromaKeyboard {
 							this.state.tapState.lastTapAt = Date.now();
 						}
 					} else {
-						// === 드래그 제스처 ===
+						// 드래그 제스처
 						if (this.state.tapState.centerDragHasExited) {
-							/*// 밖으로 나갔다가…
-							if (nowInCenter) {
-								// ☆ 왕복: 센터 재진입 지점에서 모음 제스처 종료
-								this.finishVowelGestureAt(e.clientX, e.clientY); // 네가 쓰는 모음 결정 함수 호출
-								// (콤마 금지)
-							} else {
-								// ☆ 일반 외곽 종결: 밖에서 모음/방향 처리
-								this.finishVowelGestureAt(e.clientX, e.clientY);
-							}
-							this.resetCompositionIfNeeded?.();*/
 						} else {
 							// 한번도 밖으로 안 나감 → 내부 드래그: 콤마
 							if (nowInCenter) {
@@ -286,13 +272,12 @@ class HaromaKeyboard {
 				this.state.dragState.isActive = false;
 				return;
 			}
-
 			// 중앙키 외에는 별도 처리 없음
 			this.state.dragState.isActive = false;
 		});
         this.attachRemainingListeners();
     }
-	
+
     updateSyllable(newVowel) {
         if (this.state.lastCharInfo && this.state.lastCharInfo.type === 'CV') {
             const cho = this.state.lastCharInfo.cho;
@@ -321,7 +306,7 @@ class HaromaKeyboard {
             this.insertAtCursor(charToInsert);
         }
     }
-	
+
     composeHangul(char) {
         const last = this.state.lastCharInfo;
         const isChosung = this.CHOSUNG.includes(char);
@@ -381,10 +366,10 @@ class HaromaKeyboard {
         if (ci < 0 || ji < 0) return cho + (jung || '') + (jong || '');
         return String.fromCharCode(0xAC00 + (ci * 21 + ji) * 28 + joi);
     }
-    
+
     attachRemainingListeners() {
         document.querySelectorAll('[data-click]').forEach(el => {
-            // [수정됨] 중앙 키 예외 처리 로직 수정
+            // 중앙 키 예외 처리 로직 수정
             const parentLayer = el.closest('.layer');
             if (el.classList.contains('octagon-center') && parentLayer) {
                 const layerName = parentLayer.dataset.layer;
@@ -393,10 +378,10 @@ class HaromaKeyboard {
                     return;
                 }
             }
-            
+
             let pointerMoved = false;
 			let downX = 0, downY = 0;
-            
+
             el.addEventListener('pointerdown', e => {
                 this.state.isPointerDown = true;
                 pointerMoved = false;
@@ -429,7 +414,7 @@ class HaromaKeyboard {
             el.addEventListener('click', e => {
                 e.preventDefault();
                 if (pointerMoved) return;
-                
+
                 if (this.state.clickTimeout) {
                     clearTimeout(this.state.clickTimeout);
                 }
@@ -446,36 +431,50 @@ class HaromaKeyboard {
                     clearTimeout(this.state.clickTimeout);
                     this.state.clickTimeout = null;
                 }
-                
+
                 this.handleInput(el.dataset.dblclick || el.dataset.click);
             });
         });
-        
+
         this.display.addEventListener('click', () => this.resetComposition());
         this.display.addEventListener('keyup', (e) => {
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) this.resetComposition();
         });
-		
+
         document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
         document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
         document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
         document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
-		document.getElementById('enter').addEventListener('click', () => this.handleEnter());
-        
+		document.getElementById('cursor-left').addEventListener('click', () => {
+			const pos = this.display.selectionStart;
+			if (pos > 0) {
+				this.display.selectionStart = this.display.selectionEnd = pos - 1;
+			}
+			this.display.focus();
+			this.resetComposition();
+		});
+		document.getElementById('cursor-right').addEventListener('click', () => {
+			const pos = this.display.selectionEnd;
+			if (pos < this.display.value.length) {
+				this.display.selectionStart = this.display.selectionEnd = pos + 1;
+			}
+			this.display.focus();
+			this.resetComposition();
+		});
 		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
         document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
         document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
         document.getElementById('hand-right').addEventListener('click', () => this.moveKeyboard(10));
         document.getElementById('position-up').addEventListener('click', () => this.moveKeyboardVertical(-10));
         document.getElementById('position-down').addEventListener('click', () => this.moveKeyboardVertical(10));
-        
+
 		document.getElementById('settings-btn').addEventListener('click', () => this.openSettings());
         document.querySelector('.close-button').addEventListener('click', () => this.closeSettings());
         window.addEventListener('click', (event) => { if (event.target == this.settingsModal) this.closeSettings(); });
         this.layerButtons.forEach(btn => btn.addEventListener('click', () => this.switchLayer(btn.dataset.layer)));
-    }	
-	
-    // 이하 기능 함수들은 변경되지 않았습니다.
+    }
+
+    // 기능 함수들
     backspace() {
         const start = this.display.selectionStart;
         const end = this.display.selectionEnd;
@@ -494,7 +493,7 @@ class HaromaKeyboard {
         this.resetComposition();
         this.display.focus();
     }
-	
+
 	deleteNextChar() {
         const start = this.display.selectionStart;
         const end = this.display.selectionEnd;
@@ -509,12 +508,7 @@ class HaromaKeyboard {
         this.resetComposition();
         this.display.focus();
     }
-	
-	handleEnter() {
-        this.insertAtCursor('\n');
-        this.resetComposition();
-    }
-	
+
 	insertAtCursor(text) {
         const start = this.display.selectionStart;
         const end = this.display.selectionEnd;
@@ -533,12 +527,12 @@ class HaromaKeyboard {
         this.display.selectionStart = this.display.selectionEnd = newCursorPos;
         this.display.focus();
     }
-	
+
 	clear() {
         this.display.value = '';
         this.resetComposition();
     }
-	
+
 	copyToClipboard() {
         if (!this.display.value) return;
         navigator.clipboard?.writeText(this.display.value)
@@ -554,11 +548,11 @@ class HaromaKeyboard {
 				else alert('복사 실패: 수동으로 복사해주세요.');
 			});
     }
-	
+
 	resetComposition() {
         this.state.lastCharInfo = null;
     }
-	
+
 	setScale(newScale) {
         this.state.scale = Math.max(0.5, Math.min(newScale, 2.0));
         localStorage.setItem('keyboardScale', this.state.scale);
