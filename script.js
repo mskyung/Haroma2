@@ -58,7 +58,7 @@ class HaromaKeyboard {
             'octagon-big5': 'ㅂ', 'octagon-big6': 'ㅅ', 'octagon-big7': 'ㅇ', 'octagon-big8': 'ㅈ'
         };
 
-		this.EN_DRAG_MAP = { 'h': 'a', 'd': 'e', 's': 'o', 'b': 'u', 'n': 'y', 'g': 'w' };
+		this.EN_DRAG_MAP = { 'h': 'a', 'd': 'e', 's': 'o', 'b': 'u', 'n': 'y', 'g': 'i' };
 
         this.state = {
             lastCharInfo: null, capsLock: false, scale: 1.0, activeLayer: 'KR',

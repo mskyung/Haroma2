@@ -2,9 +2,9 @@ body {
   display: flex;
   flex-direction: column; /* 가로 → 세로 정렬 */
   align-items: center;
-  justify-content: left;
+  justify-content: flex-start;
   background-color: #f5f5f5;
-  font-family: sans-serif;  
+  font-family: arial;  
   padding-bottom: 100px;  /* 컨트롤 버튼이 다른 콘텐츠를 가리지 않도록 body에 하단 여백 추가 */
 }
 
@@ -84,14 +84,18 @@ body {
   transform-origin: bottom;   /* transform-origin을 'bottom'으로 변경하여 중앙에서 확대/축소되도록 함 */
   transition: transform 0.1s ease-in-out;  
   position: relative;      /* 위치 이동을 위해 position 속성 추가 */
+  touch-action: none;
+  user-select: none;
 }
+
+.layer svg { touch-action: none; user-select: none; }
 
 svg {
   width: 100%;
   height: 100%;
 }
 
-svg#keyboard {    /* 입력용 키보드 */
+.keyboard {    /* 입력용 키보드 */
     width: 300px;
     height: 300px;
     border-radius: 2px;
