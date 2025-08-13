@@ -1,3 +1,8 @@
+const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
+const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
+const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
+const DOUBLE_TAP_MS = 250;    // 더블탭(마침표) 판정
+
 class HaromaKeyboard {
     constructor(options) {
         // 주요 DOM 요소
@@ -18,14 +23,14 @@ class HaromaKeyboard {
         // 드래그 제스처 맵 (KR 레이어 전용)
         this.VOWEL_DRAG_MAP = {
             'ㅇ': 'ㅏ', 'ㄷ': 'ㅓ', 'ㅅ': 'ㅗ', 'ㅂ': 'ㅜ',
-            'ㄱ': 'ㅡ', 'ㅈ': 'ㅡ', 'ㄴ': 'ㅣ', 'ㅁ': 'ㅣ'
+            'ㄱ': 'ㅣ', 'ㅈ': 'ㅣ', 'ㄴ': 'ㅡ', 'ㅁ': 'ㅡ'
         };
         this.IOTIZED_VOWEL_MAP = {
             'ㅏ': 'ㅑ', 'ㅓ': 'ㅕ', 'ㅗ': 'ㅛ', 'ㅜ': 'ㅠ', 'ㅡ': 'ㅢ', 'ㅣ': 'ㅢ'
         };
         this.COMPOUND_VOWEL_MAP = {
-            'ㅏ': { 'ㄱ': 'ㅐ', 'ㅁ': 'ㅒ' },
-            'ㅓ': { 'ㅈ': 'ㅔ', 'ㄴ': 'ㅖ' },
+            'ㅏ': { 'ㄱ': 'ㅒ', 'ㅁ': 'ㅐ' },
+            'ㅓ': { 'ㅈ': 'ㅖ', 'ㄴ': 'ㅔ' },
             'ㅗ': { 'ㄱ': 'ㅘ', 'ㅈ': 'ㅚ' },
             'ㅜ': { 'ㅁ': 'ㅟ', 'ㄴ': 'ㅝ' },
             'ㅘ': { 'ㅇ': 'ㅙ' },
@@ -35,7 +40,7 @@ class HaromaKeyboard {
         // K-E 레이어를 위한 3개의 새 맵
         this.KE_VOWEL_DRAG_MAP = {
             'ㅇ': 'k', 'ㄷ': 'j', 'ㅅ': 'h', 'ㅂ': 'n',
-            'ㄱ': 'm', 'ㅈ': 'm', 'ㄴ': 'l', 'ㅁ': 'l'
+            'ㄱ': 'l', 'ㅈ': 'l', 'ㄴ': 'm', 'ㅁ': 'm'
         };
         this.KE_IOTIZED_VOWEL_MAP = {
             'ㅏ': 'i', 'ㅓ': 'u', 'ㅗ': 'y', 'ㅜ': 'b', 'ㅡ': 'ml', 'ㅣ': 'ml'
@@ -63,7 +68,8 @@ class HaromaKeyboard {
             dragState: {
                 isActive: false, conceptualVowel: null, lastOutput: null,
                 isEnDrag: false, startX: 0, startY: 0
-            }
+            },
+			tapState: { lastTapAt: 0, longPressFired: false, centerPressed: false, centerDragHasExited: false }
         };
         this.init();
     }
@@ -89,6 +95,10 @@ class HaromaKeyboard {
 	
     attachEventListeners() {
         let lastHoveredKey = null;
+		const isInCenter = (x, y) => {
+			const el = document.elementFromPoint(x, y);
+			return !!(el && el.closest('.octagon-center'));
+		};
 
         const setupDragListener = (layerName, isEn = false) => {
             const layer = document.querySelector(`.layer[data-layer="${layerName}"]`);
@@ -97,6 +107,27 @@ class HaromaKeyboard {
             if (!centerOctagon) return;
 
             centerOctagon.addEventListener('pointerdown', e => {
+				this.state.tapState.centerPressed = true;
+				this.state.tapState.longPressFired = false;
+				this.state.tapState.centerDragHasExited = false; //추가시
+				this.state.dragState = {
+					isActive: true,
+					startX: e.clientX,
+					startY: e.clientY,
+				};												//추가종
+				//this.state.dragState.startX = e.clientX;
+				//this.state.dragState.startY = e.clientY;
+				
+				// 길게누름 타이머
+				clearTimeout(this._centerLongTimer);
+				this._centerLongTimer = setTimeout(() => {
+					// 드래그로 넘어가거나 이미 처리되었으면 무시
+					if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
+					this.insertAtCursor('\n');          // 엔터
+					this.resetComposition();
+					this.state.tapState.longPressFired = true;
+				}, LONG_PRESS_MS);
+				
                 if (this.state.activeLayer !== layerName) return;
                 this.state.dragState = {
                     isActive: true, conceptualVowel: null, lastOutput: null,
@@ -113,6 +144,21 @@ class HaromaKeyboard {
         setupDragListener('EN', true);
 		
         document.addEventListener('pointermove', e => {
+			const dx = e.clientX - this.state.dragState.startX;
+			const dy = e.clientY - this.state.dragState.startY;
+			const movedDist = Math.hypot(dx, dy);
+			
+			if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
+
+			// 한번이라도 센터 밖으로 나가면 플래그 ON
+			if (!this.state.tapState.centerDragHasExited && !isInCenter(e.clientX, e.clientY)) {
+				this.state.tapState.centerDragHasExited = true;   // ☆ 밖으로 나감
+			}
+			
+			// 중앙키 누른 상태에서 충분히 움직이면 = 드래그 시작 → 길게누름 취소
+			if (this.state.tapState.centerPressed && movedDist > DRAG_THRESHOLD) {
+				clearTimeout(this._centerLongTimer);
+			}
             if (!this.state.dragState.isActive) return;
 
             const currentElement = document.elementFromPoint(e.clientX, e.clientY);
@@ -122,8 +168,8 @@ class HaromaKeyboard {
             lastHoveredKey = targetKey;
 
             if (this.state.activeLayer === 'K-E') {
-                const targetKeyClass = targetKey.classList[0];
-                const consonant = this.KEY_POSITION_TO_CONSONANT[targetKeyClass];
+                const bigClass = Array.from(targetKey.classList).find(c => c.startsWith('octagon-big'));
+				const consonant = this.KEY_POSITION_TO_CONSONANT[bigClass];
 
                 if (!this.state.dragState.conceptualVowel) {
                     if (targetKey.classList.contains('octagon-center')) return;
@@ -185,19 +231,65 @@ class HaromaKeyboard {
         });
 
         document.addEventListener('pointerup', e => {
-            if (!this.state.dragState.isActive) return;
+			if (!this.state.dragState.isActive) return;
 
-            const moved = Math.abs(e.clientX - this.state.dragState.startX) > 10 || Math.abs(e.clientY - this.state.dragState.startY) > 10;
-            if (!moved) {
-                if (this.state.dragState.isEnDrag) {
-                    this.handleInput(' ');
-                } else if (this.state.activeLayer === 'KR') {
-                    this.handleInput(' ');
-                }
-            }
-            this.state.dragState.isActive = false;
-        });
+			const dx = e.clientX - this.state.dragState.startX;
+			const dy = e.clientY - this.state.dragState.startY;
+			const movedDist = Math.hypot(dx, dy);
+			const nowInCenter = isInCenter(e.clientX, e.clientY);
 
+			// 중앙키로 시작한 경우: 탭/더블탭/길게누름/드래그 처리
+			if (this.state.tapState.centerPressed) {
+				clearTimeout(this._centerLongTimer);
+
+				// 길게누름이 이미 발동했으면 더 처리하지 않음
+				if (!this.state.tapState.longPressFired) {
+					if (movedDist <= DEAD_ZONE) {
+						// 탭 또는 더블탭
+						const now = Date.now();
+						if (now - this.state.tapState.lastTapAt <= DOUBLE_TAP_MS) {
+							const cur = this.display.selectionStart;
+							const hasSpaceBefore = cur > 0 && this.display.value[cur - 1] === ' ';
+							if (hasSpaceBefore) this.replaceTextBeforeCursor(1, '. ');
+							else this.insertAtCursor('. ');
+							this.resetComposition();
+							this.state.tapState.lastTapAt = 0;
+						} else {
+							this.insertAtCursor(' ');
+							this.resetComposition();
+							this.state.tapState.lastTapAt = Date.now();
+						}
+					} else {
+						// === 드래그 제스처 ===
+						if (this.state.tapState.centerDragHasExited) {
+							/*// 밖으로 나갔다가…
+							if (nowInCenter) {
+								// ☆ 왕복: 센터 재진입 지점에서 모음 제스처 종료
+								this.finishVowelGestureAt(e.clientX, e.clientY); // 네가 쓰는 모음 결정 함수 호출
+								// (콤마 금지)
+							} else {
+								// ☆ 일반 외곽 종결: 밖에서 모음/방향 처리
+								this.finishVowelGestureAt(e.clientX, e.clientY);
+							}
+							this.resetCompositionIfNeeded?.();*/
+						} else {
+							// 한번도 밖으로 안 나감 → 내부 드래그: 콤마
+							if (nowInCenter) {
+								this.insertAtCursor(', ');      // 원하면 ','
+								this.resetComposition();
+							}
+						}
+					}
+				}
+				// 중앙키 플래그 및 드래그 종료
+				this.state.tapState.centerPressed = false;
+				this.state.dragState.isActive = false;
+				return;
+			}
+
+			// 중앙키 외에는 별도 처리 없음
+			this.state.dragState.isActive = false;
+		});
         this.attachRemainingListeners();
     }
 	
@@ -303,15 +395,20 @@ class HaromaKeyboard {
             }
             
             let pointerMoved = false;
+			let downX = 0, downY = 0;
             
             el.addEventListener('pointerdown', e => {
                 this.state.isPointerDown = true;
                 pointerMoved = false;
+				downX = e.clientX;
+				downY = e.clientY;
             });
 
             el.addEventListener('pointermove', e => {
                 if (this.state.isPointerDown && !pointerMoved) {
-                    pointerMoved = true;
+                    const dx = e.clientX - downX;
+					const dy = e.clientY - downY;
+					if (Math.hypot(dx, dy) > DRAG_THRESHOLD) pointerMoved = true; // 12px 임계값
                 }
             });
 
@@ -360,7 +457,6 @@ class HaromaKeyboard {
         });
 		
         document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        //document.getElementById('space').addEventListener('click', () => this.handleInput(' '));
         document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
         document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
         document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
@@ -445,9 +541,18 @@ class HaromaKeyboard {
 	
 	copyToClipboard() {
         if (!this.display.value) return;
-        navigator.clipboard.writeText(this.display.value)
+        navigator.clipboard?.writeText(this.display.value)
             .then(() => alert('클립보드에 복사되었습니다.'))
-            .catch(err => console.error('복사 실패:', err));
+            .catch(() => {
+				const ta = document.createElement('textarea');
+				ta.value = this.display.value;
+				document.body.appendChild(ta);
+				ta.select();
+				const ok = document.execCommand('copy');
+				document.body.removeChild(ta);
+				if (ok) alert('클립보드에 복사되었습니다.');
+				else alert('복사 실패: 수동으로 복사해주세요.');
+			});
     }
 	
 	resetComposition() {
@@ -521,6 +626,9 @@ class HaromaKeyboard {
             enButton.classList.toggle('caps-on', this.state.capsLock);
         }
         this.updateEnKeyCaps();
+		this.state.dragState = { isActive:false, conceptualVowel:null, lastOutput:null, isEnDrag:false, startX:0, startY:0 };
+		this.state.tapState.centerPressed = false;
+		clearTimeout(this._centerLongTimer);
     }
 
     openSettings() {
