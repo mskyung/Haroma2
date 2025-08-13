@@ -1,7 +1,7 @@
 const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
 const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
-const DOUBLE_TAP_MS = 400;    // 더블탭(마침표) 판정
+const DOUBLE_TAP_MS = 350;    // 더블탭(마침표) 판정
 
 class HaromaKeyboard {
     constructor(options) {
@@ -63,7 +63,7 @@ class HaromaKeyboard {
         this.state = {
             lastCharInfo: null, capsLock: false, scale: 1.0, activeLayer: 'KR',
             isPointerDown: false, pointerMoved: false, clickTimeout: null,
-            horizontalOffset: 0, verticalOffset: 0,
+            horizontalOffset: 0, verticalOffset: 0, pointerOwnerEl: null,
             dragState: {
                 isActive: false, conceptualVowel: null, lastOutput: null,
                 isEnDrag: false, startX: 0, startY: 0
@@ -381,59 +381,86 @@ class HaromaKeyboard {
 
             let pointerMoved = false;
 			let downX = 0, downY = 0;
+			// 각 키별 탭상태 저장
+			let lastTapAt = 0;
+			let singleTapTimer = null;
+			const TAP_MS = 400;          // 350~450 추천
+			const DEAD = DRAG_THRESHOLD; // 기존 임계값(12px) 재사용
+			// 드래그 처리용
+			let isDraggingKey = false;        // 드래그 모드인지
+			let dragStartedCharInserted = false; // 시작 글자 한 번만 넣기
 
             el.addEventListener('pointerdown', e => {
-                this.state.isPointerDown = true;
-                pointerMoved = false;
-				downX = e.clientX;
-				downY = e.clientY;
+                if (this.state.tapState.centerPressed) return;
+				if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+
+				this.state.pointerOwnerEl = el;        // ★ 오너 지정
+				this.state.isPointerDown = true;
+				pointerMoved = false;
+				isDraggingKey = false;
+				dragStartedCharInserted = false;
+				downX = e.clientX; downY = e.clientY;
+				e.preventDefault();
             });
 
             el.addEventListener('pointermove', e => {
-                if (this.state.isPointerDown && !pointerMoved) {
-                    const dx = e.clientX - downX;
-					const dy = e.clientY - downY;
-					if (Math.hypot(dx, dy) > DRAG_THRESHOLD) pointerMoved = true; // 12px 임계값
-                }
-            });
+				if (this.state.pointerOwnerEl !== el) return;
+				if (!this.state.isPointerDown) return;
+
+				const dx = e.clientX - downX, dy = e.clientY - downY;
+				if (!pointerMoved && Math.hypot(dx, dy) > DEAD) {
+					pointerMoved = true;
+					isDraggingKey = true;
+					if (!dragStartedCharInserted) {
+						const startChar = el.dataset.drag || el.dataset.click; // ★ 드래그 시작은 drag 우선
+						if (startChar) this.handleInput(startChar);
+						dragStartedCharInserted = true;
+						if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
+					}
+				}
+			});
 
             el.addEventListener('pointerup', e => {
-                if (this.state.isPointerDown && pointerMoved) {
-                    this.handleInput(el.dataset.drag || el.dataset.click);
-                }
-                this.state.isPointerDown = false;
-            });
+				if (this.state.pointerOwnerEl !== el) return;
+				if (el.releasePointerCapture) {
+					try { el.releasePointerCapture(e.pointerId); } catch {}
+				}
 
-            el.addEventListener('pointerleave', e => {
-                if (this.state.isPointerDown && pointerMoved) {
-                    this.handleInput(el.dataset.drag || el.dataset.click);
-                    this.state.isPointerDown = false;
-                }
-            });
+				const wasDrag = isDraggingKey;
+				this.state.isPointerDown = false;
+				this.state.pointerOwnerEl = null; // ★ 해제
 
-            el.addEventListener('click', e => {
-                e.preventDefault();
-                if (pointerMoved) return;
+				if (wasDrag) return;
 
-                if (this.state.clickTimeout) {
-                    clearTimeout(this.state.clickTimeout);
-                }
-                this.state.clickTimeout = setTimeout(() => {
-                    this.handleInput(el.dataset.click);
-                }, 250);
-            });
-
-            el.addEventListener('dblclick', e => {
-                e.preventDefault();
-                if (pointerMoved) return;
-
-                if (this.state.clickTimeout) {
-                    clearTimeout(this.state.clickTimeout);
-                    this.state.clickTimeout = null;
-                }
-
-                this.handleInput(el.dataset.dblclick || el.dataset.click);
-            });
+				const now = Date.now();
+				if (now - lastTapAt <= TAP_MS) {
+					if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
+					this.handleInput(el.dataset.dblclick || el.dataset.click);
+					lastTapAt = 0;
+				} else {
+					lastTapAt = now;
+					if (singleTapTimer) clearTimeout(singleTapTimer);
+					singleTapTimer = setTimeout(() => {
+						this.handleInput(el.dataset.click);
+						singleTapTimer = null;
+					}, TAP_MS);
+				}
+			});
+            el.addEventListener('pointerleave', () => {
+				// ★ 오너일 때만 정리
+				if (this.state.pointerOwnerEl === el) {
+					this.state.isPointerDown = false;
+					this.state.pointerOwnerEl = null;
+					if (el.releasePointerCapture) {
+						try { el.releasePointerCapture(e.pointerId); } catch {}
+					}
+				}
+			})
+			document.addEventListener('pointercancel', () => {
+				// 전역 안전망
+				this.state.isPointerDown = false;
+				this.state.pointerOwnerEl = null;
+			});
         });
 
         this.display.addEventListener('click', () => this.resetComposition());
