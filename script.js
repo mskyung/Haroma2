@@ -3,6 +3,92 @@ const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
 const DOUBLE_TAP_MS = 350;    // 더블탭(마침표) 판정
 
+
+
+// === Secret Chat: helpers ===
+const SecretUtil = {
+  enc: new TextEncoder(),
+  dec: new TextDecoder(),
+  b64(buf) {
+    // ArrayBuffer -> base64
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    bytes.forEach(b => bin += String.fromCharCode(b));
+    return btoa(bin);
+  },
+  b64toBuf(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+};
+
+// === Secret Chat: AES-GCM + PBKDF2 (브라우저 WebCrypto) ===
+class SecretChat {
+  // 고정 salt를 쓰면 사본 간 호환이 쉽고, 보안상은 passphrase 강도에 의존.
+  // 필요하면 UI에서 salt도 사용자화 가능.
+  static SALT = SecretUtil.enc.encode('HaromaSalt-v1');
+  static ITER = 250000; // PBKDF2 횟수 (안전/속도 균형)
+
+  static async _deriveKey(passphrase) {
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      SecretUtil.enc.encode(passphrase),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        hash: 'SHA-256',
+        salt: SecretChat.SALT,
+        iterations: SecretChat.ITER
+      },
+      baseKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  static async encrypt(plainText, passphrase) {
+    const key = await SecretChat._deriveKey(passphrase);
+    const iv = crypto.getRandomValues(new Uint8Array(12)); // AES-GCM 권장 96-bit IV
+    const ct = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      SecretUtil.enc.encode(plainText)
+    );
+    // 포맷: HAROMA1.<base64(iv)>.<base64(ciphertext)>
+    return `HAROMA1.${SecretUtil.b64(iv)}.${SecretUtil.b64(ct)}`;
+  }
+
+  static async decrypt(cipherText, passphrase) {
+    if (!cipherText.startsWith('HAROMA1.')) throw new Error('지원하지 않는 형식');
+    const parts = cipherText.split('.');
+    if (parts.length !== 3) throw new Error('손상된 암호문');
+    const iv = new Uint8Array(SecretUtil.b64toBuf(parts[1]));
+    const data = SecretUtil.b64toBuf(parts[2]);
+    const key = await SecretChat._deriveKey(passphrase);
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      data
+    );
+    return SecretUtil.dec.decode(pt);
+  }
+}
+
+
+
+
+
+
+
+
+
 class HaromaKeyboard {
     constructor(options) {
         this.display = document.getElementById(options.displayId);
@@ -18,10 +104,7 @@ class HaromaKeyboard {
         this.DOUBLE_FINAL = { 'ㄱㅅ': 'ㄳ', 'ㄴㅈ': 'ㄵ', 'ㄴㅎ': 'ㄶ', 'ㄹㄱ': 'ㄺ', 'ㄹㅁ': 'ㄻ', 'ㄹㅂ': 'ㄼ', 'ㄹㅅ': 'ㄽ', 'ㄹㅌ': 'ㄾ', 'ㄹㅍ': 'ㄿ', 'ㄹㅎ': 'ㅀ', 'ㅂㅅ': 'ㅄ' };
         this.REVERSE_DOUBLE_FINAL = Object.fromEntries(Object.entries(this.DOUBLE_FINAL).map(([key, val]) => [val, key.split('')]));
 		this.COMPLEX_VOWEL = { 'ㅗㅏ': 'ㅘ', 'ㅗㅐ': 'ㅙ', 'ㅗㅣ': 'ㅚ', 'ㅜㅓ': 'ㅝ', 'ㅜㅔ': 'ㅞ', 'ㅜㅣ': 'ㅟ', 'ㅡㅣ': 'ㅢ', 'ㅓㅣ':'ㅔ', 'ㅕㅣ':'ㅖ', 'ㅏㅣ':'ㅐ', 'ㅑㅣ':'ㅒ' };
-		this.REVERSE_COMPLEX_VOWEL = Object.fromEntries(
-			Object.entries(this.COMPLEX_VOWEL).map(([pair, comp]) => [comp, pair.split('')])
-		);
-		
+
         // 드래그 제스처 맵 (KR 레이어 전용)
         this.VOWEL_DRAG_MAP = {
             'ㅇ': 'ㅏ', 'ㄷ': 'ㅓ', 'ㅅ': 'ㅗ', 'ㅂ': 'ㅜ',
@@ -73,14 +156,131 @@ class HaromaKeyboard {
             },
 			tapState: { lastTapAt: 0, longPressFired: false, centerPressed: false, centerDragHasExited: false }
         };
-        this.init();
+		
+		
+		// Secret Chat state
+		this.secret = {
+			passphrase: sessionStorage.getItem('haroma_secret_pass') || '',
+			remember: localStorage.getItem('haroma_secret_remember') === '1'
+		};
+		
+		
+        this.init();		
     }
 
     init() {
         this.loadSettings();
         this.attachEventListeners();
         this.switchLayer('KR');
+		this._wireSecretUI();
     }
+	
+	
+	
+	// === Secret Chat: UI wiring ===
+	_wireSecretUI() {
+		const modal = document.getElementById('secret-modal');
+		const btnKey = document.getElementById('secret-key-btn');
+		const btnEnc = document.getElementById('encrypt-btn');
+		const btnDec = document.getElementById('decrypt-btn');
+		const btnClose = modal.querySelector('.secret-close');
+		const btnCancel = document.getElementById('secret-cancel');
+		const btnSave = document.getElementById('secret-save');
+		const input = document.getElementById('secret-pass');
+		const remember = document.getElementById('secret-remember');
+
+		const open = () => {
+			input.value = this.secret.passphrase || '';
+			remember.checked = this.secret.remember;
+			modal.style.display = 'block';
+			setTimeout(() => input.focus(), 0);
+		};
+		const close = () => { modal.style.display = 'none'; };
+
+			btnKey?.addEventListener('click', open);
+			btnClose?.addEventListener('click', close);
+			btnCancel?.addEventListener('click', close);
+			window.addEventListener('click', (e) => { if (e.target === modal) close(); });
+
+			btnSave?.addEventListener('click', () => {
+				const val = (input.value || '').trim();
+				this.secret.passphrase = val;
+				this.secret.remember = !!remember.checked;
+				if (this.secret.remember) {
+					localStorage.setItem('haroma_secret_pass', val);
+					localStorage.setItem('haroma_secret_remember', '1');
+				} else {
+					localStorage.removeItem('haroma_secret_pass');
+					localStorage.removeItem('haroma_secret_remember');
+				}
+				// 세션엔 항상 넣어준다(브라우저 닫히면 삭제)
+				sessionStorage.setItem('haroma_secret_pass', val);
+				close();
+			});
+
+		// Encrypt
+		btnEnc?.addEventListener('click', async () => {
+			try {
+				const src = this._getSelectionOrAll();
+				if (!src.text) return;
+				await this._ensurePassphrase(open);
+				const out = await SecretChat.encrypt(src.text, this.secret.passphrase);
+				this._replaceSelectionOrAll(src, out);
+				this.resetComposition();
+			} catch (err) {
+				alert('Encrypt 실패: ' + (err?.message || err));
+			}
+		});
+
+		// Decrypt
+		btnDec?.addEventListener('click', async () => {
+			try {
+				const src = this._getSelectionOrAll();
+				if (!src.text) return;
+				await this._ensurePassphrase(open);
+				const out = await SecretChat.decrypt(src.text.trim(), this.secret.passphrase);
+				this._replaceSelectionOrAll(src, out);
+				this.resetComposition();
+			} catch (err) {
+				alert('Decrypt 실패: ' + (err?.message || err));
+			}
+		});
+	};
+
+	async _ensurePassphrase(openModal) {
+		// 저장된 키(remember) 우선 로드
+		if (!this.secret.passphrase) {
+			const saved = localStorage.getItem('haroma_secret_pass');
+			if (saved) {
+				this.secret.passphrase = saved;
+				sessionStorage.setItem('haroma_secret_pass', saved);
+			}
+		}
+		if (!this.secret.passphrase) openModal?.();
+	};
+
+	// 텍스트 영역 선택/치환 유틸
+	_getSelectionOrAll() {
+		const ta = this.display;
+		const start = ta.selectionStart;
+		const end = ta.selectionEnd;
+		if (start !== end) {
+			return { range: [start, end], text: ta.value.slice(start, end) };
+		}
+		return { range: [0, ta.value.length], text: ta.value };
+	};
+	_replaceSelectionOrAll(src, newText) {
+		const ta = this.display;
+		const [s, e] = src.range;
+		ta.value = ta.value.slice(0, s) + newText + ta.value.slice(e);
+		const cursor = s + newText.length;
+		ta.selectionStart = ta.selectionEnd = cursor;
+		ta.focus();
+	};
+
+	
+	
+	
 
     loadSettings() {
         const savedScale = localStorage.getItem('keyboardScale');
@@ -449,7 +649,7 @@ class HaromaKeyboard {
 					}, TAP_MS);
 				}
 			});
-            el.addEventListener('pointerleave', () => {
+            el.addEventListener('pointerleave', (e) => {
 				// ★ 오너일 때만 정리
 				if (this.state.pointerOwnerEl === el) {
 					this.state.isPointerDown = false;
@@ -472,10 +672,10 @@ class HaromaKeyboard {
         });
 
         document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
+        //document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
         document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
         document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
-		document.getElementById('cursor-left').addEventListener('click', () => {
+	/*	document.getElementById('cursor-left').addEventListener('click', () => {
 			const pos = this.display.selectionStart;
 			if (pos > 0) {
 				this.display.selectionStart = this.display.selectionEnd = pos - 1;
@@ -490,7 +690,7 @@ class HaromaKeyboard {
 			}
 			this.display.focus();
 			this.resetComposition();
-		});
+		});*/
 		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
         document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
         document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
@@ -506,83 +706,23 @@ class HaromaKeyboard {
 
     // 기능 함수들
     backspace() {
-		const start = this.display.selectionStart;
-		const end   = this.display.selectionEnd;
-		const text  = this.display.value;
-
-		// 드래그로 블록 선택했다면: 통째 삭제 후 조합 종료
-		if (start !== end) {
-			this.display.value = text.substring(0, start) + text.substring(end);
-			this.display.selectionStart = this.display.selectionEnd = start;
-			this.resetComposition();
-			this.display.focus();
-			return;
-		}
-		// 커서 맨 앞이면 종료
-		if (start === 0) return;
-
-		const last = this.state.lastCharInfo;
-
-		// 조합 중이 아닐 때는 기존처럼 한 글자 삭제
-		if (!last) {
-			this.display.value = text.substring(0, start - 1) + text.substring(start);
-			this.display.selectionStart = this.display.selectionEnd = start - 1;
-			this.display.focus();
-			return;
-		}
-
-		// === 조합 상태별 단계적 되돌리기 ===
-		// 1) 초+중+종 (CVJ) : 종성 1타만 되돌림 (겹받침이면 한 자만 풀기)
-		if (last.type === 'CVJ') {
-			const doubleJ = this.REVERSE_DOUBLE_FINAL[last.jong]; // 예: 'ㄳ' → ['ㄱ','ㅅ']
-			if (doubleJ) {
-				// 겹받침 → 마지막 자모만 제거하여 단일 받침으로
-				const newJong = doubleJ[0];
-				const newChar = this.combineCode(last.cho, last.jung, newJong);
-				this.replaceTextBeforeCursor(1, newChar);
-				this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: newJong };
-			} else {
-				// 단일 받침 → 받침 제거하여 CV로
-				const newChar = this.combineCode(last.cho, last.jung);
-				this.replaceTextBeforeCursor(1, newChar);
-				this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: last.jung };
-			}
-			this.display.focus();
-			return;
-		}
-
-		// 2) 초+중 (CV)
-		if (last.type === 'CV') {
-			// 복합 모음이면 기본 모음으로 1단계 되돌리기 (예: ㅘ → ㅗ)
-			const rev = this.REVERSE_COMPLEX_VOWEL && this.REVERSE_COMPLEX_VOWEL[last.jung];
-			if (rev) {
-				const baseVowel = rev[0]; // 'ㅗㅏ' → ['ㅗ','ㅏ'] 중 기본은 'ㅗ'
-				const newChar = this.combineCode(last.cho, baseVowel);
-				this.replaceTextBeforeCursor(1, newChar);
-				this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: baseVowel };
-			} else {
-				//단모음이면 중성 제거 → 초성 단독 자모로 되돌림
-				this.replaceTextBeforeCursor(1, last.cho);
-				this.state.lastCharInfo = { type: 'C', cho: last.cho };
-			}
-			this.display.focus();
-			return;
-		}
-
-		// 3) 초성만 (C) : 자모 자체 삭제
-		if (last.type === 'C') {
-			this.replaceTextBeforeCursor(1, '');
-			this.resetComposition();
-			this.display.focus();
-			return;
-		}
-
-		// 혹시 모르는 예외는 안전하게 1글자 삭제
-		this.display.value = text.substring(0, start - 1) + text.substring(start);
-		this.display.selectionStart = this.display.selectionEnd = start - 1;
-		this.resetComposition();
-		this.display.focus();
-	}
+        const start = this.display.selectionStart;
+        const end = this.display.selectionEnd;
+        if (start === 0 && end === 0) return;
+        let newCursorPos = start;
+        if (start === end) {
+            if (start > 0) {
+                this.display.value = this.display.value.substring(0, start - 1) + this.display.value.substring(start);
+                newCursorPos = start - 1;
+            }
+        } else {
+            this.display.value = this.display.value.substring(0, start) + this.display.value.substring(end);
+            newCursorPos = start;
+        }
+        this.display.selectionStart = this.display.selectionEnd = newCursorPos;
+        this.resetComposition();
+        this.display.focus();
+    }
 
 	deleteNextChar() {
         const start = this.display.selectionStart;

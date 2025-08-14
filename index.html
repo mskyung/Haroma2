@@ -8,9 +8,10 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-<h3 id="app-title">Haroma (Har<font color="gray">mony</font> Ha<font color="gray">ngul </font>Aroma)</h3>
+<!--<h3 id="app-title">Haroma (Har<font color="gray">mony</font> Ha<font color="gray">ngul </font>Aroma)</h3>-->
 <div id="display-container">
-	<textarea id="display" readonly></textarea>
+	<label for="display" style="display:block;margin:6px 0;font-size:14px;">원문</label>
+	<textarea id="display" placeholder="여기에 원문을 직접 입력하세요"></textarea>
 </div>
 <div id="keyboard-container">
     <div class="layer active" data-layer="KR">
@@ -139,6 +140,7 @@
 		<text x="40" y="54" font-size="11" text-anchor="middle" fill="black" pointer-events="none">.</text>
 		<text x="50" y="54" font-size="9" text-anchor="middle" fill="black" pointer-events="none">?</text>
 		<text x="60" y="54" font-size="11" text-anchor="middle" fill="black" pointer-events="none">,</text>
+		</svg>
     </div>
 	  
     <div class="layer" data-layer="NUM">
@@ -240,14 +242,33 @@
         </div>
     </div>
 </div>
+<div id="secret-modal" class="modal">
+  <div class="modal-content">
+    <span class="close-button secret-close">&times;</span>
+    <h3>Secret Key</h3>
+    <p style="margin-top:8px">우리 둘만 아는 비밀번호(패스프레이즈)를 적어줘.</p>
+    <input id="secret-pass" type="password" placeholder="Enter passphrase" style="width:100%;padding:8px;margin:8px 0" />
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0">
+      <input id="secret-remember" type="checkbox" />
+      <span>브라우저에 이 키를 기억하기</span>
+    </label>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button id="secret-cancel">Cancel</button>
+      <button id="secret-save">Save</button>
+    </div>
+  </div>
+</div>
 <div id="layer-switcher">
     <div class="button-row">
         <button id="refresh-btn">Clear</button>        
         <button id="copy-btn">Copy</button>
-		<button id="cursor-left">|←</button>
-		<button id="cursor-right">→|</button>
-		<button id="backspace">⌫</button>
-		<button id="delete-btn">⌦</button>		
+		<!--<button id="cursor-left">|←</button>		
+		<button id="delete-btn">⌦</button>	
+		<button id="cursor-right">→|</button>-->
+		<button id="encrypt-btn">Encrypt</button>
+		<button id="decrypt-btn">Decrypt</button>
+		<button id="secret-key-btn">Key</button>
+		<button id="backspace">⌫</button>	
     </div>
     <div class="button-row">
 		<button id="settings-btn">☼</button>
