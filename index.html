@@ -418,6 +418,14 @@ document.getElementById('decodeBtn').addEventListener('click', async () => {
 });
 */
 
+const haromaInput = document.getElementById('haromaInput');
+  if (haromaInput) {
+    haromaInput.readOnly = true;
+    haromaInput.addEventListener('focus', () => {
+      const kb = document.getElementById('keyboard-container');
+      if (kb) kb.style.display = 'block';
+    });
+  }
 
 </script>
 </body>
