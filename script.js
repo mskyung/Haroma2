@@ -436,7 +436,29 @@ class HaromaKeyboard {
 				if (wasDrag) return;
 
 				const now = Date.now();
+				const clickOutput   = el.dataset.click || '';				//2025.08.14.12.46
+				const dblclickOutput = el.dataset.dblclick || clickOutput;	//2025.08.14.12.46
+				
+				// 더블탭: 직전 단일탭 입력을 치환
 				if (now - lastTapAt <= TAP_MS) {
+					// 방금 전 single-tap으로 들어간 글자 길이만큼 치환
+					// (영문/기호도 안전하게 처리하려면 clickOutput 길이 사용)
+					if (clickOutput && clickOutput.length > 0) {
+						this.replaceTextBeforeCursor(clickOutput.length, dblclickOutput);
+					} else {
+						// clickOutput이 비어있을 수 있는 특수키 대비
+						this.handleInput(dblclickOutput);
+					}
+					lastTapAt = 0;
+					return;
+				}
+				// 단일탭: 지연 없이 즉시 입력
+				if (clickOutput && clickOutput.length > 0) {
+					this.handleInput(clickOutput);
+				}
+				lastTapAt = now;
+	
+				/*if (now - lastTapAt <= TAP_MS) {
 					if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
 					this.handleInput(el.dataset.dblclick || el.dataset.click);
 					lastTapAt = 0;
@@ -447,7 +469,8 @@ class HaromaKeyboard {
 						this.handleInput(el.dataset.click);
 						singleTapTimer = null;
 					}, TAP_MS);
-				}
+				}*/
+				
 			});
             el.addEventListener('pointerleave', () => {
 				// ★ 오너일 때만 정리
