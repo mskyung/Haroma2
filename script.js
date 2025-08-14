@@ -1,7 +1,7 @@
-const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
+const DEAD_ZONE = 11;          // 움직임이 이 이하면 "탭"
 const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
-const DOUBLE_TAP_MS = 350;    // 더블탭(마침표) 판정
+const DOUBLE_TAP_MS = 300;    // 더블탭(마침표) 판정
 
 class HaromaKeyboard {
     constructor(options) {
@@ -387,7 +387,7 @@ class HaromaKeyboard {
 			// 각 키별 탭상태 저장
 			let lastTapAt = 0;
 			let singleTapTimer = null;
-			const TAP_MS = 350;          // 350~450 추천
+			const TAP_MS = 300;          // 350~450 추천
 			const DEAD = DRAG_THRESHOLD; // 기존 임계값(12px) 재사용
 			// 드래그 처리용
 			let isDraggingKey = false;        // 드래그 모드인지
