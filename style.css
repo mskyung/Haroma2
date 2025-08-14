@@ -211,3 +211,12 @@ button {     /* 숫자,기호,영어,한글... 좌,우,Clear 버튼 */
     height: 40px;
     font-size: 1.2rem;
 }
+
+.wide-btn {
+  display: inline-block;  /* 또는 block */
+  width: 400px;
+  padding: 6px 100px;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
