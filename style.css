@@ -101,7 +101,11 @@ body {
 
 
  #keyboard-container {
-    padding-bottom: 120px; /* 버튼 높이보다 약간 크게 */
+    position: fixed;
+    right: 16px;
+    top: 140px;           /* 필요하면 숫자만 바꿔 위아래 이동 */
+    z-index: 9000;        /* 텍스트 영역/다른 요소보다 위 */
+    pointer-events: auto;
   }
 
 
