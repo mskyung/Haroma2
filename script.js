@@ -18,7 +18,10 @@ class HaromaKeyboard {
         this.DOUBLE_FINAL = { 'ㄱㅅ': 'ㄳ', 'ㄴㅈ': 'ㄵ', 'ㄴㅎ': 'ㄶ', 'ㄹㄱ': 'ㄺ', 'ㄹㅁ': 'ㄻ', 'ㄹㅂ': 'ㄼ', 'ㄹㅅ': 'ㄽ', 'ㄹㅌ': 'ㄾ', 'ㄹㅍ': 'ㄿ', 'ㄹㅎ': 'ㅀ', 'ㅂㅅ': 'ㅄ' };
         this.REVERSE_DOUBLE_FINAL = Object.fromEntries(Object.entries(this.DOUBLE_FINAL).map(([key, val]) => [val, key.split('')]));
 		this.COMPLEX_VOWEL = { 'ㅗㅏ': 'ㅘ', 'ㅗㅐ': 'ㅙ', 'ㅗㅣ': 'ㅚ', 'ㅜㅓ': 'ㅝ', 'ㅜㅔ': 'ㅞ', 'ㅜㅣ': 'ㅟ', 'ㅡㅣ': 'ㅢ', 'ㅓㅣ':'ㅔ', 'ㅕㅣ':'ㅖ', 'ㅏㅣ':'ㅐ', 'ㅑㅣ':'ㅒ' };
-
+		this.REVERSE_COMPLEX_VOWEL = Object.fromEntries(
+			Object.entries(this.COMPLEX_VOWEL).map(([pair, comp]) => [comp, pair.split('')])
+		);
+		
         // 드래그 제스처 맵 (KR 레이어 전용)
         this.VOWEL_DRAG_MAP = {
             'ㅇ': 'ㅏ', 'ㄷ': 'ㅓ', 'ㅅ': 'ㅗ', 'ㅂ': 'ㅜ',
@@ -503,23 +506,83 @@ class HaromaKeyboard {
 
     // 기능 함수들
     backspace() {
-        const start = this.display.selectionStart;
-        const end = this.display.selectionEnd;
-        if (start === 0 && end === 0) return;
-        let newCursorPos = start;
-        if (start === end) {
-            if (start > 0) {
-                this.display.value = this.display.value.substring(0, start - 1) + this.display.value.substring(start);
-                newCursorPos = start - 1;
-            }
-        } else {
-            this.display.value = this.display.value.substring(0, start) + this.display.value.substring(end);
-            newCursorPos = start;
-        }
-        this.display.selectionStart = this.display.selectionEnd = newCursorPos;
-        this.resetComposition();
-        this.display.focus();
-    }
+		const start = this.display.selectionStart;
+		const end   = this.display.selectionEnd;
+		const text  = this.display.value;
+
+		// 드래그로 블록 선택했다면: 통째 삭제 후 조합 종료
+		if (start !== end) {
+			this.display.value = text.substring(0, start) + text.substring(end);
+			this.display.selectionStart = this.display.selectionEnd = start;
+			this.resetComposition();
+			this.display.focus();
+			return;
+		}
+		// 커서 맨 앞이면 종료
+		if (start === 0) return;
+
+		const last = this.state.lastCharInfo;
+
+		// 조합 중이 아닐 때는 기존처럼 한 글자 삭제
+		if (!last) {
+			this.display.value = text.substring(0, start - 1) + text.substring(start);
+			this.display.selectionStart = this.display.selectionEnd = start - 1;
+			this.display.focus();
+			return;
+		}
+
+		// === 조합 상태별 단계적 되돌리기 ===
+		// 1) 초+중+종 (CVJ) : 종성 1타만 되돌림 (겹받침이면 한 자만 풀기)
+		if (last.type === 'CVJ') {
+			const doubleJ = this.REVERSE_DOUBLE_FINAL[last.jong]; // 예: 'ㄳ' → ['ㄱ','ㅅ']
+			if (doubleJ) {
+				// 겹받침 → 마지막 자모만 제거하여 단일 받침으로
+				const newJong = doubleJ[0];
+				const newChar = this.combineCode(last.cho, last.jung, newJong);
+				this.replaceTextBeforeCursor(1, newChar);
+				this.state.lastCharInfo = { type: 'CVJ', cho: last.cho, jung: last.jung, jong: newJong };
+			} else {
+				// 단일 받침 → 받침 제거하여 CV로
+				const newChar = this.combineCode(last.cho, last.jung);
+				this.replaceTextBeforeCursor(1, newChar);
+				this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: last.jung };
+			}
+			this.display.focus();
+			return;
+		}
+
+		// 2) 초+중 (CV)
+		if (last.type === 'CV') {
+			// 복합 모음이면 기본 모음으로 1단계 되돌리기 (예: ㅘ → ㅗ)
+			const rev = this.REVERSE_COMPLEX_VOWEL && this.REVERSE_COMPLEX_VOWEL[last.jung];
+			if (rev) {
+				const baseVowel = rev[0]; // 'ㅗㅏ' → ['ㅗ','ㅏ'] 중 기본은 'ㅗ'
+				const newChar = this.combineCode(last.cho, baseVowel);
+				this.replaceTextBeforeCursor(1, newChar);
+				this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: baseVowel };
+			} else {
+				//단모음이면 중성 제거 → 초성 단독 자모로 되돌림
+				this.replaceTextBeforeCursor(1, last.cho);
+				this.state.lastCharInfo = { type: 'C', cho: last.cho };
+			}
+			this.display.focus();
+			return;
+		}
+
+		// 3) 초성만 (C) : 자모 자체 삭제
+		if (last.type === 'C') {
+			this.replaceTextBeforeCursor(1, '');
+			this.resetComposition();
+			this.display.focus();
+			return;
+		}
+
+		// 혹시 모르는 예외는 안전하게 1글자 삭제
+		this.display.value = text.substring(0, start - 1) + text.substring(start);
+		this.display.selectionStart = this.display.selectionEnd = start - 1;
+		this.resetComposition();
+		this.display.focus();
+	}
 
 	deleteNextChar() {
         const start = this.display.selectionStart;
