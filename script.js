@@ -387,7 +387,7 @@ class HaromaKeyboard {
 			// 각 키별 탭상태 저장
 			let lastTapAt = 0;
 			let singleTapTimer = null;
-			const TAP_MS = 400;          // 350~450 추천
+			const TAP_MS = 350;          // 350~450 추천
 			const DEAD = DRAG_THRESHOLD; // 기존 임계값(12px) 재사용
 			// 드래그 처리용
 			let isDraggingKey = false;        // 드래그 모드인지
