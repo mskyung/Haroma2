@@ -292,6 +292,148 @@
         });
     });
   }
+
+/** =========================
+ *  HAROMA0 (무암호) / HAROMA1 (AES-GCM+PBKDF2) 통합 유틸
+ *  - secretKey 입력칸이 없으면 자동으로 무암호(HAROMA0) 모드
+ *  - 있으면 보안모드(HAROMA1) 사용
+ *  - 토큰 자동 판별 복호화 지원
+ *  ========================= */
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+/* ---------- Base64 helpers (ArrayBuffer <-> b64) ---------- */
+function abToB64(ab) {
+  const bytes = new Uint8Array(ab);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64ToAb(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+const strToB64 = s => btoa(String.fromCharCode(...enc.encode(s)));
+const b64ToStr = b64 => dec.decode(new Uint8Array([...atob(b64)].map(c=>c.charCodeAt(0))));
+
+/* ---------- 모드/헤더 ---------- */
+const HEADER_NONE = 'HAROMA0';  // HAROMA0..<base64(plaintext)>
+const HEADER_SEC  = 'HAROMA1';  // HAROMA1.<ivB64>.<cipherTagB64>
+
+const keyInput = document.getElementById('secretKey');
+const SIMPLE_MODE = !keyInput;   // 입력칸 없으면 무암호 모드
+
+/* ---------- 무암호 모드 ---------- */
+function encryptNoKey(plaintext) {
+  return `${HEADER_NONE}..${strToB64(plaintext)}`;
+}
+function decryptNoKey(token) {
+  const parts = token.split('.');
+  const b64 = parts[2] || '';
+  return b64ToStr(b64);
+}
+
+/* ---------- 보안 모드 파라미터 (필요 시 조정 가능) ---------- */
+const PBKDF2_ITER = 120_000;  // 반복수
+const KEY_LEN     = 256;      // AES-256
+const IV_LEN      = 12;       // GCM nonce 12 bytes 권장
+const TAG_LEN     = 128;      // GCM tag bits (WebCrypto 기본)
+
+/* ---------- WebCrypto: PBKDF2 -> AES-GCM 키 유도 ---------- */
+async function deriveKey(password, saltBytes /*ArrayBuffer*/) {
+  const pwKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes,
+      iterations: PBKDF2_ITER,
+      hash: 'SHA-256'
+    },
+    pwKey,
+    { name: 'AES-GCM', length: KEY_LEN },
+    false,
+    ['encrypt','decrypt']
+  );
+}
+
+/* ---------- 보안모드 암/복호화 ---------- */
+async function encryptSecure(plaintext, password) {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+  const key = await deriveKey(password, iv.buffer);
+  const pt = enc.encode(plaintext);
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: TAG_LEN },
+    key,
+    pt
+  );
+  const ivB64 = abToB64(iv.buffer);
+  const ctB64 = abToB64(ct);            // cipher || tag
+  return `${HEADER_SEC}.${ivB64}.${ctB64}`;
+}
+
+async function decryptSecure(token, password) {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('Invalid HAROMA1 token format');
+  const iv = new Uint8Array(b64ToAb(parts[1]));
+  const ct = b64ToAb(parts[2]);
+  const key = await deriveKey(password, iv.buffer);
+  const ptAb = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv, tagLength: TAG_LEN },
+    key,
+    ct
+  );
+  return dec.decode(ptAb);
+}
+
+/* ---------- 자동 인코드/디코드 API ---------- */
+async function encodeMessage(text) {
+  if (SIMPLE_MODE) return encryptNoKey(text);
+  const pw = keyInput?.value ?? '';
+  return encryptSecure(text, pw);
+}
+
+async function decodeMessage(token) {
+  if (token.startsWith(HEADER_NONE + '.')) {
+    return decryptNoKey(token);
+  }
+  if (token.startsWith(HEADER_SEC + '.')) {
+    if (!keyInput) throw new Error('이 메시지는 보안모드입니다. Secret Key 입력칸이 필요해요.');
+    const pw = keyInput.value ?? '';
+    return decryptSecure(token, pw);
+  }
+  // 헤더 없는 경우 평문으로 간주
+  return token;
+}
+
+/* ---------- (예시) 버튼 핸들러 연결 ---------- */
+/* 
+document.getElementById('encodeBtn').addEventListener('click', async () => {
+  const src = document.getElementById('plain').value;
+  const out = await encodeMessage(src);
+  document.getElementById('encoded').value = out;
+});
+
+document.getElementById('decodeBtn').addEventListener('click', async () => {
+  const tok = document.getElementById('encoded').value;
+  try {
+    const out = await decodeMessage(tok);
+    document.getElementById('decoded').value = out;
+  } catch (e) {
+    alert('복호화 실패: ' + (e?.message ?? e));
+  }
+});
+*/
+
+
 </script>
 </body>
 </html>
