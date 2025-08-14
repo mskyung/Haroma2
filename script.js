@@ -445,15 +445,7 @@ class HaromaKeyboard {
 
 				if (isDouble) {
 					if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
-					const li = this.state.lastCharInfo;
-					const pos = this.display.selectionStart;
-					const prev = pos > 0 ? this.display.value[pos - 1] : '';
-					if (li && li.type === 'C' && prev === clickOutput) {
-						this.replaceTextBeforeCursor(1, dblclickOutput);
-						this.state.lastCharInfo = { type: 'C', cho: dblclickOutput };
-					} else {
-						this.handleInput(dblclickOutput);
-					}
+					this.handleInput(dblclickOutput);
 					lastTapAt = 0;
 					lastTapKeyId = null;
 				} else {
@@ -478,14 +470,13 @@ class HaromaKeyboard {
 				}
 				if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
 			});
+		});	
 		document.addEventListener('pointercancel', () => {
 			// 전역 안전망
 			this.state.isPointerDown = false;
 			this.state.pointerOwnerEl = null;
 			if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
 		});
-    });
-
         this.display.addEventListener('click', () => this.resetComposition());
         this.display.addEventListener('keyup', (e) => {
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) this.resetComposition();
