@@ -86,6 +86,10 @@ body {
   overflow-y: auto;
 }
 
+#haromaInput[readonly] {
+  caret-color: transparent; /* 커서 깜빡임 제거 */
+}
+
 /*
 #keyboard-container {
   display: block;
