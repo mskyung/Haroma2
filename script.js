@@ -632,6 +632,7 @@ class HaromaKeyboard {
 				const wasDrag = isDraggingKey;
 				this.state.isPointerDown = false;
 				this.state.pointerOwnerEl = null; // ★ 해제
+				if (el.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId); } catch {} }
 
 				if (wasDrag) return;
 
