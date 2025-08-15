@@ -12,7 +12,7 @@
 <div id="display-container">
 	<label for="display" style="display:block;margin:6px 0;font-size:14px;">원문</label>
 	<textarea id="display" placeholder="여기에 원문을 직접 입력하세요"></textarea>
-	<!--<textarea id="haromaInput" readonly></textarea>-->
+	<textarea id="haromaInput" style= width:80px; height:5px;readonly></textarea>
 </div>
 <div id="keyboard-container">
     <div class="layer active" data-layer="KR">
@@ -247,13 +247,10 @@
     <div class="button-row">
         <button id="refresh-btn">Clear</button>        
         <button id="copy-btn">Copy</button>
-		<!--<button id="cursor-left">|←</button>		
+		<button id="cursor-left">|←</button>		
+		<button id="cursor-right">→|</button>		
+		<button id="backspace">⌫</button>
 		<button id="delete-btn">⌦</button>	
-		<button id="cursor-right">→|</button>-->
-		<button id="encrypt-btn">Encrypt</button>
-		<button id="decrypt-btn">Decrypt</button>
-		<button id="secret-key-btn">Key</button>
-		<button id="backspace">⌫</button>	
     </div>
     <div class="button-row">
 		<button id="settings-btn">☼</button>
@@ -360,9 +357,9 @@
 </script>
 
 <!-- 3) 간단 버튼(선택사항): 필요하면 표시, 필요없으면 이 블록은 생략 가능 -->
-<div style="margin:38px 0; display:flex; gap:5px; justify-content:center;">
-  <button type="wide-btn" onclick="HaromaSimple.encode()">인코딩</button>
-  <button type="wide-btn" onclick="HaromaSimple.decode()">디코딩</button>
+<div style="margin:45px 0; display:flex; gap:10px; justify-content:center;">
+  <button type="wide-btn" onclick="HaromaSimple.encode()">암</button>
+  <button type="wide-btn" onclick="HaromaSimple.decode()">복</button>
 </div>
 <!-- === /Haroma patch === -->
 

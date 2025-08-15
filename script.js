@@ -3,91 +3,83 @@ const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
 const DOUBLE_TAP_MS = 350;    // 더블탭(마침표) 판정
 
-
-
+// 암호화 코드(1/3) 시작
 // === Secret Chat: helpers ===
 const SecretUtil = {
-  enc: new TextEncoder(),
-  dec: new TextDecoder(),
-  b64(buf) {
-    // ArrayBuffer -> base64
-    const bytes = new Uint8Array(buf);
-    let bin = "";
-    bytes.forEach(b => bin += String.fromCharCode(b));
-    return btoa(bin);
-  },
-  b64toBuf(b64) {
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes.buffer;
-  }
+	enc: new TextEncoder(),
+	dec: new TextDecoder(),
+	b64(buf) {
+		// ArrayBuffer -> base64
+		const bytes = new Uint8Array(buf);
+		let bin = "";
+		bytes.forEach(b => bin += String.fromCharCode(b));
+		return btoa(bin);
+	},
+	b64toBuf(b64) {
+		const bin = atob(b64);
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		return bytes.buffer;
+	}
 };
 
 // === Secret Chat: AES-GCM + PBKDF2 (브라우저 WebCrypto) ===
 class SecretChat {
-  // 고정 salt를 쓰면 사본 간 호환이 쉽고, 보안상은 passphrase 강도에 의존.
-  // 필요하면 UI에서 salt도 사용자화 가능.
-  static SALT = SecretUtil.enc.encode('HaromaSalt-v1');
-  static ITER = 250000; // PBKDF2 횟수 (안전/속도 균형)
+	// 고정 salt를 쓰면 사본 간 호환이 쉽고, 보안상은 passphrase 강도에 의존.
+	// 필요하면 UI에서 salt도 사용자화 가능.
+	static SALT = SecretUtil.enc.encode('HaromaSalt-v1');
+	static ITER = 250000; // PBKDF2 횟수 (안전/속도 균형)
 
-  static async _deriveKey(passphrase) {
-    const baseKey = await crypto.subtle.importKey(
-      'raw',
-      SecretUtil.enc.encode(passphrase),
-      { name: 'PBKDF2' },
-      false,
-      ['deriveKey']
-    );
-    return crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        hash: 'SHA-256',
-        salt: SecretChat.SALT,
-        iterations: SecretChat.ITER
-      },
-      baseKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-  }
+	static async _deriveKey(passphrase) {
+		const baseKey = await crypto.subtle.importKey(
+			'raw',
+			SecretUtil.enc.encode(passphrase),
+			{ name: 'PBKDF2' },
+			false,
+			['deriveKey']
+		);
+		return crypto.subtle.deriveKey( 
+			{
+				name: 'PBKDF2',
+				hash: 'SHA-256',
+				salt: SecretChat.SALT,
+				iterations: SecretChat.ITER
+			},
+			baseKey,
+			{ name: 'AES-GCM', length: 256 },
+			false,
+			['encrypt', 'decrypt']
+		);
+	}
 
-  static async encrypt(plainText, passphrase) {
-    const key = await SecretChat._deriveKey(passphrase);
-    const iv = crypto.getRandomValues(new Uint8Array(12)); // AES-GCM 권장 96-bit IV
-    const ct = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      SecretUtil.enc.encode(plainText)
-    );
-    // 포맷: HAROMA1.<base64(iv)>.<base64(ciphertext)>
-    return `HAROMA1.${SecretUtil.b64(iv)}.${SecretUtil.b64(ct)}`;
-  }
+	static async encrypt(plainText, passphrase) {
+		const key = await SecretChat._deriveKey(passphrase);
+		const iv = crypto.getRandomValues(new Uint8Array(12)); // AES-GCM 권장 96-bit IV
+		const ct = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		SecretUtil.enc.encode(plainText)
+		);
+		// 포맷: HAROMA1.<base64(iv)>.<base64(ciphertext)>
+		return `HAROMA1.${SecretUtil.b64(iv)}.${SecretUtil.b64(ct)}`;
+	}
 
-  static async decrypt(cipherText, passphrase) {
-    if (!cipherText.startsWith('HAROMA1.')) throw new Error('지원하지 않는 형식');
-    const parts = cipherText.split('.');
-    if (parts.length !== 3) throw new Error('손상된 암호문');
-    const iv = new Uint8Array(SecretUtil.b64toBuf(parts[1]));
-    const data = SecretUtil.b64toBuf(parts[2]);
-    const key = await SecretChat._deriveKey(passphrase);
-    const pt = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      data
-    );
-    return SecretUtil.dec.decode(pt);
-  }
+	static async decrypt(cipherText, passphrase) {
+		if (!cipherText.startsWith('HAROMA1.')) throw new Error('지원하지 않는 형식');
+		const parts = cipherText.split('.');
+		if (parts.length !== 3) throw new Error('손상된 암호문');
+		const iv = new Uint8Array(SecretUtil.b64toBuf(parts[1]));
+		const data = SecretUtil.b64toBuf(parts[2]);
+		const key = await SecretChat._deriveKey(passphrase);
+		const pt = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv },
+			key,
+			data
+		);
+		return SecretUtil.dec.decode(pt);
+	}
 }
-
-
-
-
-
-
-
-
+// 암호화 코드(1/3) 종료
 
 class HaromaKeyboard {
     constructor(options) {
@@ -157,13 +149,13 @@ class HaromaKeyboard {
 			tapState: { lastTapAt: 0, longPressFired: false, centerPressed: false, centerDragHasExited: false }
         };
 		
-		
+		// 암호화 코드(2/3) 시작	
 		// Secret Chat state
 		this.secret = {
 			passphrase: sessionStorage.getItem('haroma_secret_pass') || '',
 			remember: localStorage.getItem('haroma_secret_remember') === '1'
 		};
-		
+		// 암호화 코드(2/3) 종료	
 		
         this.init();		
     }
@@ -175,8 +167,7 @@ class HaromaKeyboard {
 		this._wireSecretUI();
     }
 	
-	
-	
+	// 암호화 코드(3/3) 시작	
 	// === Secret Chat: UI wiring ===
 	_wireSecretUI() {
 		const modal = document.getElementById('secret-modal');
@@ -277,10 +268,7 @@ class HaromaKeyboard {
 		ta.selectionStart = ta.selectionEnd = cursor;
 		ta.focus();
 	};
-
-	
-	
-	
+	// 암호화 코드(3/3) 종료	
 
     loadSettings() {
         const savedScale = localStorage.getItem('keyboardScale');
@@ -673,10 +661,10 @@ class HaromaKeyboard {
         });
 
         document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        //document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
+        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
         document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
         document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
-	/*	document.getElementById('cursor-left').addEventListener('click', () => {
+		document.getElementById('cursor-left').addEventListener('click', () => {
 			const pos = this.display.selectionStart;
 			if (pos > 0) {
 				this.display.selectionStart = this.display.selectionEnd = pos - 1;
@@ -691,7 +679,7 @@ class HaromaKeyboard {
 			}
 			this.display.focus();
 			this.resetComposition();
-		});*/
+		});
 		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
         document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
         document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
