@@ -1,85 +1,7 @@
 const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
 const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
-const DOUBLE_TAP_MS = 350;    // 더블탭(마침표) 판정
-
-// 암호화 코드(1/3) 시작
-// === Secret Chat: helpers ===
-const SecretUtil = {
-	enc: new TextEncoder(),
-	dec: new TextDecoder(),
-	b64(buf) {
-		// ArrayBuffer -> base64
-		const bytes = new Uint8Array(buf);
-		let bin = "";
-		bytes.forEach(b => bin += String.fromCharCode(b));
-		return btoa(bin);
-	},
-	b64toBuf(b64) {
-		const bin = atob(b64);
-		const bytes = new Uint8Array(bin.length);
-		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-		return bytes.buffer;
-	}
-};
-
-// === Secret Chat: AES-GCM + PBKDF2 (브라우저 WebCrypto) ===
-class SecretChat {
-	// 고정 salt를 쓰면 사본 간 호환이 쉽고, 보안상은 passphrase 강도에 의존.
-	// 필요하면 UI에서 salt도 사용자화 가능.
-	static SALT = SecretUtil.enc.encode('HaromaSalt-v1');
-	static ITER = 250000; // PBKDF2 횟수 (안전/속도 균형)
-
-	static async _deriveKey(passphrase) {
-		const baseKey = await crypto.subtle.importKey(
-			'raw',
-			SecretUtil.enc.encode(passphrase),
-			{ name: 'PBKDF2' },
-			false,
-			['deriveKey']
-		);
-		return crypto.subtle.deriveKey( 
-			{
-				name: 'PBKDF2',
-				hash: 'SHA-256',
-				salt: SecretChat.SALT,
-				iterations: SecretChat.ITER
-			},
-			baseKey,
-			{ name: 'AES-GCM', length: 256 },
-			false,
-			['encrypt', 'decrypt']
-		);
-	}
-
-	static async encrypt(plainText, passphrase) {
-		const key = await SecretChat._deriveKey(passphrase);
-		const iv = crypto.getRandomValues(new Uint8Array(12)); // AES-GCM 권장 96-bit IV
-		const ct = await crypto.subtle.encrypt(
-		{ name: 'AES-GCM', iv },
-		key,
-		SecretUtil.enc.encode(plainText)
-		);
-		// 포맷: HAROMA1.<base64(iv)>.<base64(ciphertext)>
-		return `HAROMA1.${SecretUtil.b64(iv)}.${SecretUtil.b64(ct)}`;
-	}
-
-	static async decrypt(cipherText, passphrase) {
-		if (!cipherText.startsWith('HAROMA1.')) throw new Error('지원하지 않는 형식');
-		const parts = cipherText.split('.');
-		if (parts.length !== 3) throw new Error('손상된 암호문');
-		const iv = new Uint8Array(SecretUtil.b64toBuf(parts[1]));
-		const data = SecretUtil.b64toBuf(parts[2]);
-		const key = await SecretChat._deriveKey(passphrase);
-		const pt = await crypto.subtle.decrypt(
-			{ name: 'AES-GCM', iv },
-			key,
-			data
-		);
-		return SecretUtil.dec.decode(pt);
-	}
-}
-// 암호화 코드(1/3) 종료
+const DOUBLE_TAP_MS = 350;    // 더블클릭 판정 시간 (전역)
 
 class HaromaKeyboard {
     constructor(options) {
@@ -90,53 +12,25 @@ class HaromaKeyboard {
         this.settingsModal = document.getElementById(options.settingsModalId);
 
         // 한글 조합 상수 (KR 레이어 전용)
-        this.CHOSUNG = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
-        this.JUNGSUNG = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ'];
-        this.JONGSUNG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
-        this.DOUBLE_FINAL = { 'ㄱㅅ': 'ㄳ', 'ㄴㅈ': 'ㄵ', 'ㄴㅎ': 'ㄶ', 'ㄹㄱ': 'ㄺ', 'ㄹㅁ': 'ㄻ', 'ㄹㅂ': 'ㄼ', 'ㄹㅅ': 'ㄽ', 'ㄹㅌ': 'ㄾ', 'ㄹㅍ': 'ㄿ', 'ㄹㅎ': 'ㅀ', 'ㅂㅅ': 'ㅄ' };
+        this.CHOSUNG = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+        this.JUNGSUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+        this.JONGSUNG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+        this.DOUBLE_FINAL = {'ㄱㅅ':'ㄳ','ㄴㅈ':'ㄵ','ㄴㅎ':'ㄶ','ㄹㄱ':'ㄺ','ㄹㅁ':'ㄻ','ㄹㅂ':'ㄼ','ㄹㅅ':'ㄽ','ㄹㅌ':'ㄾ','ㄹㅍ':'ㄿ','ㄹㅎ':'ㅀ','ㅂㅅ':'ㅄ'};
         this.REVERSE_DOUBLE_FINAL = Object.fromEntries(Object.entries(this.DOUBLE_FINAL).map(([key, val]) => [val, key.split('')]));
-		this.COMPLEX_VOWEL = { 'ㅗㅏ': 'ㅘ', 'ㅗㅐ': 'ㅙ', 'ㅗㅣ': 'ㅚ', 'ㅜㅓ': 'ㅝ', 'ㅜㅔ': 'ㅞ', 'ㅜㅣ': 'ㅟ', 'ㅡㅣ': 'ㅢ', 'ㅓㅣ':'ㅔ', 'ㅕㅣ':'ㅖ', 'ㅏㅣ':'ㅐ', 'ㅑㅣ':'ㅒ' };
+		this.COMPLEX_VOWEL = {'ㅗㅣ':'ㅚ','ㅗㅏ':'ㅘ','ㅘㅣ':'ㅙ','ㅜㅣ':'ㅟ','ㅜㅓ':'ㅝ','ㅝㅣ':'ㅞ','ㅡㅣ':'ㅢ','ㅓㅣ':'ㅔ','ㅕㅣ':'ㅖ','ㅏㅣ':'ㅐ','ㅑㅣ':'ㅒ'};
 
         // 드래그 제스처 맵 (KR 레이어 전용)
-        this.VOWEL_DRAG_MAP = {
-            'ㅇ': 'ㅏ', 'ㄷ': 'ㅓ', 'ㅅ': 'ㅗ', 'ㅂ': 'ㅜ',
-            'ㄱ': 'ㅣ', 'ㅈ': 'ㅣ', 'ㄴ': 'ㅡ', 'ㅁ': 'ㅡ'
-        };
-        this.IOTIZED_VOWEL_MAP = {
-            'ㅏ': 'ㅑ', 'ㅓ': 'ㅕ', 'ㅗ': 'ㅛ', 'ㅜ': 'ㅠ', 'ㅡ': 'ㅢ', 'ㅣ': 'ㅢ'
-        };
-        this.COMPOUND_VOWEL_MAP = {
-            'ㅏ': { 'ㄱ': 'ㅒ', 'ㅁ': 'ㅐ' },
-            'ㅓ': { 'ㅈ': 'ㅖ', 'ㄴ': 'ㅔ' },
-            'ㅗ': { 'ㄱ': 'ㅘ', 'ㅈ': 'ㅚ' },
-            'ㅜ': { 'ㅁ': 'ㅟ', 'ㄴ': 'ㅝ' },
-            'ㅘ': { 'ㅇ': 'ㅙ' },
-            'ㅝ': { 'ㄷ': 'ㅞ' }
-        };
+        this.VOWEL_DRAG_MAP = {'ㅇ':'ㅏ','ㄷ':'ㅓ','ㅅ':'ㅗ','ㅂ':'ㅜ','ㄱ':'ㅣ','ㅈ':'ㅣ','ㄴ':'ㅡ','ㅁ':'ㅡ'};
+        this.IOTIZED_VOWEL_MAP = {'ㅏ':'ㅑ','ㅓ':'ㅕ','ㅗ':'ㅛ','ㅜ':'ㅠ','ㅡ':'ㅢ','ㅣ':'ㅢ'};
+        this.COMPOUND_VOWEL_MAP = {'ㅏ':{'ㄱ':'ㅒ','ㅁ':'ㅐ'},'ㅓ':{'ㅈ':'ㅖ','ㄴ':'ㅔ'},'ㅗ':{'ㄱ':'ㅘ','ㅈ':'ㅚ'},'ㅜ':{'ㅁ':'ㅟ','ㄴ':'ㅝ'},'ㅘ':{'ㅇ':'ㅙ'},'ㅝ':{'ㄷ':'ㅞ'}};
 
-        // K-E 레이어를 위한 3개의 새 맵
-        this.KE_VOWEL_DRAG_MAP = {
-            'ㅇ': 'k', 'ㄷ': 'j', 'ㅅ': 'h', 'ㅂ': 'n',
-            'ㄱ': 'l', 'ㅈ': 'l', 'ㄴ': 'm', 'ㅁ': 'm'
-        };
-        this.KE_IOTIZED_VOWEL_MAP = {
-            'ㅏ': 'i', 'ㅓ': 'u', 'ㅗ': 'y', 'ㅜ': 'b', 'ㅡ': 'ml', 'ㅣ': 'ml'
-        };
-        this.KE_COMPOUND_VOWEL_MAP = {
-            'ㅏ': { 'ㄱ': 'o', 'ㅁ': 'o' },
-            'ㅓ': { 'ㅈ': 'p', 'ㄴ': 'p' },
-            'ㅗ': { 'ㄱ': 'hk', 'ㅈ': 'hl' },
-            'ㅜ': { 'ㅁ': 'nl', 'ㄴ': 'nj' },
-            'ㅘ': { 'ㅇ': 'ho' },
-            'ㅝ': { 'ㄷ': 'np' }
-        };
+        // KE 레이어를 위한 3개의 새 맵
+        this.KE_VOWEL_DRAG_MAP = {'ㅇ':'k','ㄷ':'j','ㅅ':'h','ㅂ':'n','ㄱ':'l','ㅈ':'l','ㄴ':'m','ㅁ':'m'};
+        this.KE_IOTIZED_VOWEL_MAP = {'ㅏ':'i','ㅓ':'u','ㅗ':'y','ㅜ':'b','ㅡ':'ml','ㅣ':'ml'};
+        this.KE_COMPOUND_VOWEL_MAP = {'ㅏ':{'ㄱ':'o','ㅁ':'o'},'ㅓ':{'ㅈ':'p','ㄴ':'p'},'ㅗ':{'ㄱ':'hk','ㅈ':'hl'},'ㅜ':{'ㅁ':'nl','ㄴ':'nj'},'ㅘ':{'ㅇ':'ho'},'ㅝ':{'ㄷ':'np'}};
 
-        this.KEY_POSITION_TO_CONSONANT = {
-            'octagon-big1': 'ㄱ', 'octagon-big2': 'ㄴ', 'octagon-big3': 'ㄷ', 'octagon-big4': 'ㅁ',
-            'octagon-big5': 'ㅂ', 'octagon-big6': 'ㅅ', 'octagon-big7': 'ㅇ', 'octagon-big8': 'ㅈ'
-        };
-
-		this.EN_DRAG_MAP = { 'h': 'a', 'd': 'e', 's': 'o', 'b': 'u', 'n': 'y', 'g': 'i' };
+        this.KEY_POSITION_TO_CONSONANT = {'octagon-big1':'ㄱ','octagon-big2':'ㄴ','octagon-big3':'ㄷ','octagon-big4':'ㅁ','octagon-big5':'ㅂ','octagon-big6':'ㅅ','octagon-big7':'ㅇ','octagon-big8':'ㅈ'};
+		this.EN_DRAG_MAP = {'h':'a','d':'e','s':'o','b':'u','n':'y','g':'i'};
 
         this.state = {
             lastCharInfo: null, capsLock: false, scale: 1.0, activeLayer: 'KR',
@@ -146,129 +40,32 @@ class HaromaKeyboard {
                 isActive: false, conceptualVowel: null, lastOutput: null,
                 isEnDrag: false, startX: 0, startY: 0
             },
-			tapState: { lastTapAt: 0, longPressFired: false, centerPressed: false, centerDragHasExited: false }
+			tapState: { lastTapAt: 0, longPressFired: false, centerPressed: false, centerDragHasExited: false },
+            pendingSingleTap: null
         };
-		
-		// 암호화 코드(2/3) 시작	
-		// Secret Chat state
-		this.secret = {
-			passphrase: sessionStorage.getItem('haroma_secret_pass') || '',
-			remember: localStorage.getItem('haroma_secret_remember') === '1'
-		};
-		// 암호화 코드(2/3) 종료	
-		
-        this.init();		
+        this.init();
+    }
+
+    flushPendingTap() {
+        if (this.state.pendingSingleTap) {
+            clearTimeout(this.state.pendingSingleTap.timerId);
+            this.state.pendingSingleTap.action();
+            this.state.pendingSingleTap = null;
+        }
+    }
+    
+    cancelPendingTap() {
+        if (this.state.pendingSingleTap) {
+            clearTimeout(this.state.pendingSingleTap.timerId);
+            this.state.pendingSingleTap = null;
+        }
     }
 
     init() {
         this.loadSettings();
         this.attachEventListeners();
         this.switchLayer('KR');
-		this._wireSecretUI();
     }
-	
-	// 암호화 코드(3/3) 시작	
-	// === Secret Chat: UI wiring ===
-	_wireSecretUI() {
-		const modal = document.getElementById('secret-modal');
-		const btnKey = document.getElementById('secret-key-btn');
-		const btnEnc = document.getElementById('encrypt-btn');
-		const btnDec = document.getElementById('decrypt-btn');
-		const btnClose = modal.querySelector('.secret-close');
-		const btnCancel = document.getElementById('secret-cancel');
-		const btnSave = document.getElementById('secret-save');
-		const input = document.getElementById('secret-pass');
-		const remember = document.getElementById('secret-remember');
-
-		const open = () => {
-			input.value = this.secret.passphrase || '';
-			remember.checked = this.secret.remember;
-			modal.style.display = 'block';
-			setTimeout(() => input.focus(), 0);
-		};
-		const close = () => { modal.style.display = 'none'; };
-
-			btnKey?.addEventListener('click', open);
-			btnClose?.addEventListener('click', close);
-			btnCancel?.addEventListener('click', close);
-			window.addEventListener('click', (e) => { if (e.target === modal) close(); });
-
-			btnSave?.addEventListener('click', () => {
-				const val = (input.value || '').trim();
-				this.secret.passphrase = val;
-				this.secret.remember = !!remember.checked;
-				if (this.secret.remember) {
-					localStorage.setItem('haroma_secret_pass', val);
-					localStorage.setItem('haroma_secret_remember', '1');
-				} else {
-					localStorage.removeItem('haroma_secret_pass');
-					localStorage.removeItem('haroma_secret_remember');
-				}
-				// 세션엔 항상 넣어준다(브라우저 닫히면 삭제)
-				sessionStorage.setItem('haroma_secret_pass', val);
-				close();
-			});
-
-		// Encrypt
-		btnEnc?.addEventListener('click', async () => {
-			try {
-				const src = this._getSelectionOrAll();
-				if (!src.text) return;
-				await this._ensurePassphrase(open);
-				const out = await SecretChat.encrypt(src.text, this.secret.passphrase);
-				this._replaceSelectionOrAll(src, out);
-				this.resetComposition();
-			} catch (err) {
-				alert('Encrypt 실패: ' + (err?.message || err));
-			}
-		});
-
-		// Decrypt
-		btnDec?.addEventListener('click', async () => {
-			try {
-				const src = this._getSelectionOrAll();
-				if (!src.text) return;
-				await this._ensurePassphrase(open);
-				const out = await SecretChat.decrypt(src.text.trim(), this.secret.passphrase);
-				this._replaceSelectionOrAll(src, out);
-				this.resetComposition();
-			} catch (err) {
-				alert('Decrypt 실패: ' + (err?.message || err));
-			}
-		});
-	};
-
-	async _ensurePassphrase(openModal) {
-		// 저장된 키(remember) 우선 로드
-		if (!this.secret.passphrase) {
-			const saved = localStorage.getItem('haroma_secret_pass');
-			if (saved) {
-				this.secret.passphrase = saved;
-				sessionStorage.setItem('haroma_secret_pass', saved);
-			}
-		}
-		if (!this.secret.passphrase) openModal?.();
-	};
-
-	// 텍스트 영역 선택/치환 유틸
-	_getSelectionOrAll() {
-		const ta = this.display;
-		const start = ta.selectionStart;
-		const end = ta.selectionEnd;
-		if (start !== end) {
-			return { range: [start, end], text: ta.value.slice(start, end) };
-		}
-		return { range: [0, ta.value.length], text: ta.value };
-	};
-	_replaceSelectionOrAll(src, newText) {
-		const ta = this.display;
-		const [s, e] = src.range;
-		ta.value = ta.value.slice(0, s) + newText + ta.value.slice(e);
-		const cursor = s + newText.length;
-		ta.selectionStart = ta.selectionEnd = cursor;
-		ta.focus();
-	};
-	// 암호화 코드(3/3) 종료	
 
     loadSettings() {
         const savedScale = localStorage.getItem('keyboardScale');
@@ -305,10 +102,8 @@ class HaromaKeyboard {
 					startX: e.clientX,
 					startY: e.clientY,
 				};
-				// 길게누름 타이머
 				clearTimeout(this._centerLongTimer);
 				this._centerLongTimer = setTimeout(() => {
-					// 드래그로 넘어가거나 이미 처리되었으면 무시
 					if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
 					this.insertAtCursor('\n');
 					this.resetComposition();
@@ -327,7 +122,7 @@ class HaromaKeyboard {
         };
 
         setupDragListener('KR');
-        setupDragListener('K-E');
+        setupDragListener('KE');
         setupDragListener('EN', true);
 
         document.addEventListener('pointermove', e => {
@@ -335,18 +130,18 @@ class HaromaKeyboard {
 			const dy = e.clientY - this.state.dragState.startY;
 			const movedDist = Math.hypot(dx, dy);
 
-			if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
+			if (this.state.dragState.isActive && movedDist > DRAG_THRESHOLD) {
+                this.flushPendingTap();
+            }
 
-			// 한번이라도 센터 밖으로 나가면 플래그 ON
-			if (!this.state.tapState.centerDragHasExited && !isInCenter(e.clientX, e.clientY)) {
-				this.state.tapState.centerDragHasExited = true;   //밖으로 나감
-			}
-			
-			// 중앙키 누른 상태에서 충분히 움직이면 = 드래그 시작 → 길게누름 취소
-			if (this.state.tapState.centerPressed && movedDist > DRAG_THRESHOLD) {
-				clearTimeout(this._centerLongTimer);
-			}
-            if (!this.state.dragState.isActive) return;
+			if (!this.state.dragState.isActive || !this.state.tapState.centerPressed) return;
+            
+            if (!this.state.tapState.centerDragHasExited && !isInCenter(e.clientX, e.clientY)) {
+                this.state.tapState.centerDragHasExited = true;
+            }
+            if (movedDist > DRAG_THRESHOLD) {
+                clearTimeout(this._centerLongTimer);
+            }
 
             const currentElement = document.elementFromPoint(e.clientX, e.clientY);
             if (!currentElement) return;
@@ -354,38 +149,7 @@ class HaromaKeyboard {
             if (!targetKey || targetKey === lastHoveredKey) return;
             lastHoveredKey = targetKey;
 
-            if (this.state.activeLayer === 'K-E') {
-                const bigClass = Array.from(targetKey.classList).find(c => c.startsWith('octagon-big'));
-				const consonant = this.KEY_POSITION_TO_CONSONANT[bigClass];
-
-                if (!this.state.dragState.conceptualVowel) {
-                    if (targetKey.classList.contains('octagon-center')) return;
-                    const output = this.KE_VOWEL_DRAG_MAP[consonant];
-                    if (output) {
-                        this.insertAtCursor(output);
-                        this.state.dragState.conceptualVowel = this.VOWEL_DRAG_MAP[consonant];
-                        this.state.dragState.lastOutput = output;
-                    }
-                } else {
-                    if (targetKey.classList.contains('octagon-center')) {
-                        const newOutput = this.KE_IOTIZED_VOWEL_MAP[this.state.dragState.conceptualVowel];
-                        if (newOutput && newOutput !== this.state.dragState.lastOutput) {
-                            this.replaceTextBeforeCursor(this.state.dragState.lastOutput.length, newOutput);
-                            this.state.dragState.conceptualVowel = this.IOTIZED_VOWEL_MAP[this.state.dragState.conceptualVowel];
-                            this.state.dragState.lastOutput = newOutput;
-                        }
-                    } else {
-                        const compoundMap = this.KE_COMPOUND_VOWEL_MAP[this.state.dragState.conceptualVowel];
-                        if (compoundMap && compoundMap[consonant]) {
-                            const newOutput = compoundMap[consonant];
-                            this.replaceTextBeforeCursor(this.state.dragState.lastOutput.length, newOutput);
-                            this.state.dragState.conceptualVowel = this.COMPOUND_VOWEL_MAP[this.state.dragState.conceptualVowel][consonant];
-                            this.state.dragState.lastOutput = newOutput;
-                        }
-                    }
-                }
-            }
-            else if (this.state.activeLayer === 'KR') {
+            if (this.state.activeLayer === 'KR') {
                  if (targetKey.classList.contains('octagon-center')) {
                     const { conceptualVowel } = this.state.dragState;
                     if (conceptualVowel) {
@@ -406,64 +170,47 @@ class HaromaKeyboard {
                     }
                 }
             }
-            else if (this.state.dragState.isEnDrag) {
-                 if (!targetKey.classList.contains('octagon-center')) {
-                    const charToInput = this.EN_DRAG_MAP[targetKey.dataset.click];
-                    if (charToInput) {
-                        this.handleInput(charToInput);
-                        this.state.dragState.isActive = false;
-                    }
-                 }
-            }
         });
 
         document.addEventListener('pointerup', e => {
 			if (!this.state.dragState.isActive) return;
 
-			const dx = e.clientX - this.state.dragState.startX;
-			const dy = e.clientY - this.state.dragState.startY;
-			const movedDist = Math.hypot(dx, dy);
-			const nowInCenter = isInCenter(e.clientX, e.clientY);
-
-			// 중앙키로 시작한 경우: 탭/더블탭/길게누름/드래그 처리
 			if (this.state.tapState.centerPressed) {
+                const dx = e.clientX - this.state.dragState.startX;
+                const dy = e.clientY - this.state.dragState.startY;
+                const movedDist = Math.hypot(dx, dy);
+
 				clearTimeout(this._centerLongTimer);
 
-				// 길게누름이 이미 발동했으면 더 처리하지 않음
 				if (!this.state.tapState.longPressFired) {
 					if (movedDist <= DEAD_ZONE) {
-						// 탭 또는 더블탭
 						const now = Date.now();
+                        const doubleTapAction = () => {
+                            const cur = this.display.selectionStart;
+                            const hasSpaceBefore = cur > 0 && this.display.value[cur - 1] === ' ';
+                            if (hasSpaceBefore) this.replaceTextBeforeCursor(1, '. '); else this.insertAtCursor('. ');
+                            this.resetComposition();
+                        };
+                        const singleTapAction = () => { this.insertAtCursor(' '); this.resetComposition(); };
+
 						if (now - this.state.tapState.lastTapAt <= DOUBLE_TAP_MS) {
-							const cur = this.display.selectionStart;
-							const hasSpaceBefore = cur > 0 && this.display.value[cur - 1] === ' ';
-							if (hasSpaceBefore) this.replaceTextBeforeCursor(1, '. ');
-							else this.insertAtCursor('. ');
-							this.resetComposition();
+							this.cancelPendingTap();
+                            doubleTapAction();
 							this.state.tapState.lastTapAt = 0;
 						} else {
-							this.insertAtCursor(' ');
-							this.resetComposition();
-							this.state.tapState.lastTapAt = Date.now();
+							this.state.tapState.lastTapAt = now;
+							const timerId = setTimeout(() => { singleTapAction(); this.state.pendingSingleTap = null; }, DOUBLE_TAP_MS);
+                            this.state.pendingSingleTap = { timerId, action: singleTapAction };
 						}
 					} else {
-						// 드래그 제스처
-						if (this.state.tapState.centerDragHasExited) {
-						} else {
-							// 한번도 밖으로 안 나감 → 내부 드래그: 콤마
-							if (nowInCenter) {
-								this.insertAtCursor(', ');      // 원하면 ','
-								this.resetComposition();
-							}
-						}
+                        if (!this.state.tapState.centerDragHasExited && isInCenter(e.clientX, e.clientY)) {
+                            this.insertAtCursor(', ');
+                            this.resetComposition();
+                        }
 					}
 				}
-				// 중앙키 플래그 및 드래그 종료
 				this.state.tapState.centerPressed = false;
-				this.state.dragState.isActive = false;
-				return;
 			}
-			// 중앙키 외에는 별도 처리 없음
 			this.state.dragState.isActive = false;
 		});
         this.attachRemainingListeners();
@@ -524,6 +271,7 @@ class HaromaKeyboard {
                 const newChar = this.combineCode(last.cho, char);
                 this.replaceTextBeforeCursor(1, newChar);
                 this.state.lastCharInfo = { type: 'CV', cho: last.cho, jung: char };
+            // ★★★ 복합 모음(ㅗ + ㅏ = ㅘ 등) 처리 로직 ★★★
             } else if (last && last.type === 'CV' && this.COMPLEX_VOWEL[last.jung + char]) {
                 const newVowel = this.COMPLEX_VOWEL[last.jung + char];
                 const newChar = this.combineCode(last.cho, newVowel);
@@ -560,140 +308,99 @@ class HaromaKeyboard {
 
     attachRemainingListeners() {
         document.querySelectorAll('[data-click]').forEach(el => {
-            // 중앙 키 예외 처리 로직 수정
-            const parentLayer = el.closest('.layer');
-            if (el.classList.contains('octagon-center') && parentLayer) {
-                const layerName = parentLayer.dataset.layer;
-                // KR, K-E, EN 레이어의 중앙 키는 별도 드래그 로직을 사용하므로 제외
-                if (layerName === 'KR' || layerName === 'K-E' || layerName === 'EN') {
-                    return;
-                }
-            }
+            if (el.classList.contains('octagon-center')) return;
 
-            let pointerMoved = false;
-			let downX = 0, downY = 0;
-			// 각 키별 탭상태 저장
-			let lastTapAt = 0;
-			let singleTapTimer = null;
-			const TAP_MS = 400;          // 350~450 추천
-			const DEAD = DRAG_THRESHOLD; // 기존 임계값(12px) 재사용
-			// 드래그 처리용
-			let isDraggingKey = false;        // 드래그 모드인지
-			let dragStartedCharInserted = false; // 시작 글자 한 번만 넣기
+            let pointerDownHere = false;
+            let hasTriggeredDrag = false;
+            let lastTapAt = 0;
 
             el.addEventListener('pointerdown', e => {
                 if (this.state.tapState.centerPressed) return;
-				if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
 
-				this.state.pointerOwnerEl = el;        // ★ 오너 지정
-				this.state.isPointerDown = true;
-				pointerMoved = false;
-				isDraggingKey = false;
-				dragStartedCharInserted = false;
-				downX = e.clientX; downY = e.clientY;
-				e.preventDefault();
+                pointerDownHere = true;
+                hasTriggeredDrag = false;
+                this.state.dragState.isActive = true;
+                try { el.setPointerCapture(e.pointerId); } catch (err) {}
+                e.preventDefault();
             });
 
             el.addEventListener('pointermove', e => {
-				if (this.state.pointerOwnerEl !== el) return;
-				if (!this.state.isPointerDown) return;
+                if (!pointerDownHere || hasTriggeredDrag) return;
 
-				const dx = e.clientX - downX, dy = e.clientY - downY;
-				if (!pointerMoved && Math.hypot(dx, dy) > DEAD) {
-					pointerMoved = true;
-					isDraggingKey = true;
-					if (!dragStartedCharInserted) {
-						const startChar = el.dataset.drag || el.dataset.click; // ★ 드래그 시작은 drag 우선
-						if (startChar) this.handleInput(startChar);
-						dragStartedCharInserted = true;
-						if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
-					}
-				}
-			});
+                const rect = el.getBoundingClientRect();
+                if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+                    
+                    hasTriggeredDrag = true;
+                    this.cancelPendingTap();
+                    
+                    if (el.dataset.drag) {
+                        this.handleInput(el.dataset.drag);
+                    }
+
+                    pointerDownHere = false;
+                    this.state.dragState.isActive = false;
+                    try { el.releasePointerCapture(e.pointerId); } catch (err) {}
+                }
+            });
 
             el.addEventListener('pointerup', e => {
-				if (this.state.pointerOwnerEl !== el) return;
-				if (el.releasePointerCapture) {
-					try { el.releasePointerCapture(e.pointerId); } catch {}
-				}
+                if (this.state.tapState.centerPressed) return;
+                
+                if (!pointerDownHere) return;
 
-				const wasDrag = isDraggingKey;
-				this.state.isPointerDown = false;
-				this.state.pointerOwnerEl = null; // ★ 해제
-				if (el.releasePointerCapture) { try { el.releasePointerCapture(e.pointerId); } catch {} }
-
-				if (wasDrag) return;
-
-				const now = Date.now();
-				if (now - lastTapAt <= TAP_MS) {
-					if (singleTapTimer) { clearTimeout(singleTapTimer); singleTapTimer = null; }
-					this.handleInput(el.dataset.dblclick || el.dataset.click);
-					lastTapAt = 0;
-				} else {
-					lastTapAt = now;
-					if (singleTapTimer) clearTimeout(singleTapTimer);
-					singleTapTimer = setTimeout(() => {
-						this.handleInput(el.dataset.click);
-						singleTapTimer = null;
-					}, TAP_MS);
-				}
-			});
-            el.addEventListener('pointerleave', (e) => {
-				// ★ 오너일 때만 정리
-				if (this.state.pointerOwnerEl === el) {
-					this.state.isPointerDown = false;
-					this.state.pointerOwnerEl = null;
-					if (el.releasePointerCapture) {
-						try { el.releasePointerCapture(e.pointerId); } catch {}
-					}
-				}
-			})
-			document.addEventListener('pointercancel', () => {
-				// 전역 안전망
-				this.state.isPointerDown = false;
-				this.state.pointerOwnerEl = null;
-			});
+                const now = Date.now();
+                if (now - lastTapAt <= DOUBLE_TAP_MS) {
+                    this.cancelPendingTap();
+                    this.handleInput(el.dataset.dblclick || el.dataset.click);
+                    lastTapAt = 0;
+                } else {
+                    lastTapAt = now;
+                    const action = () => this.handleInput(el.dataset.click);
+                    const timerId = setTimeout(() => {
+                        action();
+                        this.state.pendingSingleTap = null;
+                    }, DOUBLE_TAP_MS);
+                    this.state.pendingSingleTap = { timerId, action };
+                }
+                
+                pointerDownHere = false;
+                this.state.dragState.isActive = false;
+                try { el.releasePointerCapture(e.pointerId); } catch (err) {}
+            });
         });
 
-        this.display.addEventListener('click', () => this.resetComposition());
-        this.display.addEventListener('keyup', (e) => {
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) this.resetComposition();
-        });
-
-        document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
-        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
-        document.getElementById('refresh-btn').addEventListener('click', () => this.clear());
-        document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
+        // 나머지 UI 버튼 이벤트 리스너들
+        this.display.addEventListener('click', () => this.flushPendingTap());
+        document.getElementById('refresh-btn').addEventListener('click', () => { this.clear(); this.flushPendingTap(); });
 		document.getElementById('cursor-left').addEventListener('click', () => {
-			const pos = this.display.selectionStart;
-			if (pos > 0) {
-				this.display.selectionStart = this.display.selectionEnd = pos - 1;
-			}
-			this.display.focus();
-			this.resetComposition();
+			this.flushPendingTap();
+            const pos = this.display.selectionStart;
+			if (pos > 0) { this.display.selectionStart = this.display.selectionEnd = pos - 1; }
+			this.display.focus(); this.resetComposition();
 		});
 		document.getElementById('cursor-right').addEventListener('click', () => {
-			const pos = this.display.selectionEnd;
-			if (pos < this.display.value.length) {
-				this.display.selectionStart = this.display.selectionEnd = pos + 1;
-			}
-			this.display.focus();
-			this.resetComposition();
+			this.flushPendingTap();
+            const pos = this.display.selectionEnd;
+			if (pos < this.display.value.length) { this.display.selectionStart = this.display.selectionEnd = pos + 1; }
+			this.display.focus(); this.resetComposition();
 		});
+        document.getElementById('backspace').addEventListener('click', () => { this.backspace(); this.resetComposition(); });
+        document.getElementById('delete-btn').addEventListener('click', () => { this.deleteNextChar(); this.resetComposition(); });
+        document.getElementById('copy-btn').addEventListener('click', () => this.copyToClipboard());
+		
 		document.getElementById('scale-up').addEventListener('click', () => this.setScale(this.state.scale + 0.01));
         document.getElementById('scale-down').addEventListener('click', () => this.setScale(this.state.scale - 0.01));
         document.getElementById('hand-left').addEventListener('click', () => this.moveKeyboard(-10));
         document.getElementById('hand-right').addEventListener('click', () => this.moveKeyboard(10));
         document.getElementById('position-up').addEventListener('click', () => this.moveKeyboardVertical(-10));
         document.getElementById('position-down').addEventListener('click', () => this.moveKeyboardVertical(10));
-
 		document.getElementById('settings-btn').addEventListener('click', () => this.openSettings());
         document.querySelector('.close-button').addEventListener('click', () => this.closeSettings());
         window.addEventListener('click', (event) => { if (event.target == this.settingsModal) this.closeSettings(); });
         this.layerButtons.forEach(btn => btn.addEventListener('click', () => this.switchLayer(btn.dataset.layer)));
     }
-
-    // 기능 함수들
+    
+	// 기능 함수들
     backspace() {
         const start = this.display.selectionStart;
         const end = this.display.selectionEnd;
@@ -712,46 +419,7 @@ class HaromaKeyboard {
         this.resetComposition();
         this.display.focus();
     }
-
-	deleteNextChar() {
-        const start = this.display.selectionStart;
-        const end = this.display.selectionEnd;
-        const text = this.display.value;
-        if (start === end && start < text.length) {
-            this.display.value = text.substring(0, start) + text.substring(start + 1);
-            this.display.selectionStart = this.display.selectionEnd = start;
-        } else if (start < end) {
-            this.display.value = text.substring(0, start) + text.substring(end);
-            this.display.selectionStart = this.display.selectionEnd = start;
-        }
-        this.resetComposition();
-        this.display.focus();
-    }
-
-	insertAtCursor(text) {
-        const start = this.display.selectionStart;
-        const end = this.display.selectionEnd;
-        this.display.value = this.display.value.substring(0, start) + text + this.display.value.substring(end);
-        this.display.selectionStart = this.display.selectionEnd = start + text.length;
-        this.display.focus();
-    }
 	
-	replaceTextBeforeCursor(charsToRemove, textToInsert) {
-        const start = this.display.selectionStart;
-        if (start < charsToRemove) return;
-        const before = this.display.value.substring(0, start - charsToRemove);
-        const after = this.display.value.substring(start);
-        this.display.value = before + textToInsert + after;
-        const newCursorPos = before.length + textToInsert.length;
-        this.display.selectionStart = this.display.selectionEnd = newCursorPos;
-        this.display.focus();
-    }
-
-	clear() {
-        this.display.value = '';
-        this.resetComposition();
-    }
-
 	copyToClipboard() {
         if (!this.display.value) return;
         navigator.clipboard?.writeText(this.display.value)
@@ -768,39 +436,69 @@ class HaromaKeyboard {
 			});
     }
 
+	deleteNextChar() {
+        const start = this.display.selectionStart;
+        const end = this.display.selectionEnd;
+        const text = this.display.value;
+        if (start === end && start < text.length) {
+            this.display.value = text.substring(0, start) + text.substring(start + 1);
+            this.display.selectionStart = this.display.selectionEnd = start;
+        } else if (start < end) {
+            this.display.value = text.substring(0, start) + text.substring(end);
+            this.display.selectionStart = this.display.selectionEnd = start;
+        }
+        this.resetComposition();
+        this.display.focus();
+    }
+	
+	insertAtCursor(text) {
+        const start = this.display.selectionStart;
+        const end = this.display.selectionEnd;
+        this.display.value = this.display.value.substring(0, start) + text + this.display.value.substring(end);
+        this.display.selectionStart = this.display.selectionEnd = start + text.length;
+        this.display.focus();
+    }
+	replaceTextBeforeCursor(charsToRemove, textToInsert) {
+        const start = this.display.selectionStart;
+        if (start < charsToRemove) return;
+        const before = this.display.value.substring(0, start - charsToRemove);
+        const after = this.display.value.substring(start);
+        this.display.value = before + textToInsert + after;
+        const newCursorPos = before.length + textToInsert.length;
+        this.display.selectionStart = this.display.selectionEnd = newCursorPos;
+        this.display.focus();
+    }
+	clear() {
+        this.display.value = '';
+        this.resetComposition();
+    }
 	resetComposition() {
         this.state.lastCharInfo = null;
     }
-
 	setScale(newScale) {
         this.state.scale = Math.max(0.5, Math.min(newScale, 2.0));
         localStorage.setItem('keyboardScale', this.state.scale);
         this.applyKeyboardTransform();
     }
-	
 	applyHorizontalPosition() {
         this.keyboardContainer.style.left = `calc(50% + ${this.state.horizontalOffset}px)`;
     }
-
     moveKeyboard(direction) {
         this.state.horizontalOffset += direction;
         this.applyHorizontalPosition();
         localStorage.setItem('keyboardHorizontalOffset', this.state.horizontalOffset);
     }
-
     applyKeyboardTransform() {
         const scale = `scale(${this.state.scale})`;
         const translateX = `translateX(-50%)`;
         const translateY = `translateY(${this.state.verticalOffset}px)`;
         this.keyboardContainer.style.transform = `${translateY} ${translateX} ${scale}`;
     }
-
     moveKeyboardVertical(direction) {
         this.state.verticalOffset += direction;
         this.applyKeyboardTransform();
         localStorage.setItem('keyboardVerticalOffset', this.state.verticalOffset);
     }
-
     updateEnKeyCaps() {
         const isCaps = this.state.capsLock;
         const enKeys = document.querySelectorAll('.layer[data-layer="EN"] text');
@@ -811,8 +509,8 @@ class HaromaKeyboard {
             }
         });
     }
-
     switchLayer(layerName) {
+        this.flushPendingTap();
         if (layerName === 'EN') {
             if (this.state.activeLayer === 'EN') {
                 this.state.capsLock = !this.state.capsLock;
@@ -822,18 +520,14 @@ class HaromaKeyboard {
         } else {
             this.state.capsLock = false;
         }
-
         this.state.activeLayer = layerName;
         this.resetComposition();
-
         document.querySelectorAll('.layer').forEach(div => {
             div.classList.toggle('active', div.dataset.layer === layerName);
         });
-
         this.layerButtons.forEach(btn => {
             btn.classList.toggle('active', btn.dataset.layer === layerName);
         });
-
         const enButton = document.querySelector('button[data-layer="EN"]');
         if (enButton) {
             enButton.classList.toggle('caps-on', this.state.capsLock);
@@ -843,11 +537,9 @@ class HaromaKeyboard {
 		this.state.tapState.centerPressed = false;
 		clearTimeout(this._centerLongTimer);
     }
-
     openSettings() {
         this.settingsModal.style.display = 'block';
     }
-
     closeSettings() {
         this.settingsModal.style.display = 'none';
     }
