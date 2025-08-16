@@ -2,6 +2,7 @@ const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
 const DRAG_THRESHOLD = 8;    // 이 이상이면 "드래그"
 const LONG_PRESS_MS = 350;    // 길게누름(엔터) 판정
 const DOUBLE_TAP_MS = 250;    // 더블클릭 판정 시간 (전역)
+const OUTER_BUTTON_DEAD_ZONE = 5; // ✨ 이 줄을 추가하세요. (값은 3~7 사이에서 조절)
 
 class HaromaKeyboard {
     constructor(options) {
@@ -313,12 +314,15 @@ class HaromaKeyboard {
             let pointerDownHere = false;
             let hasTriggeredDrag = false;
             let lastTapAt = 0;
+			let startX = 0, startY = 0;
 
             el.addEventListener('pointerdown', e => {
                 if (this.state.tapState.centerPressed) return;
 
                 pointerDownHere = true;
                 hasTriggeredDrag = false;
+				startX = e.clientX;
+				startY = e.clientY;
                 this.state.dragState.isActive = true;
                 try { el.setPointerCapture(e.pointerId); } catch (err) {}
                 e.preventDefault();
@@ -347,21 +351,27 @@ class HaromaKeyboard {
                 if (this.state.tapState.centerPressed) return;
                 
                 if (!pointerDownHere) return;
+				
+				const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                const movedDist = Math.hypot(dx, dy);
 
-                const now = Date.now();
-                if (now - lastTapAt <= DOUBLE_TAP_MS) {
-                    this.cancelPendingTap();
-                    this.handleInput(el.dataset.dblclick || el.dataset.click);
-                    lastTapAt = 0;
-                } else {
-                    lastTapAt = now;
-                    const action = () => this.handleInput(el.dataset.click);
-                    const timerId = setTimeout(() => {
-                        action();
-                        this.state.pendingSingleTap = null;
-                    }, DOUBLE_TAP_MS);
-                    this.state.pendingSingleTap = { timerId, action };
-                }
+                if (movedDist <= OUTER_BUTTON_DEAD_ZONE) {
+					const now = Date.now();
+					if (now - lastTapAt <= DOUBLE_TAP_MS) {
+						this.cancelPendingTap();
+						this.handleInput(el.dataset.dblclick || el.dataset.click);
+						lastTapAt = 0;
+					} else {
+						lastTapAt = now;
+						const action = () => this.handleInput(el.dataset.click);
+						const timerId = setTimeout(() => {
+							action();
+							this.state.pendingSingleTap = null;
+						}, DOUBLE_TAP_MS);
+						this.state.pendingSingleTap = { timerId, action };
+					}
+				}	
                 
                 pointerDownHere = false;
                 this.state.dragState.isActive = false;
