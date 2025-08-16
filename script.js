@@ -1,7 +1,7 @@
 const DEAD_ZONE = 6;          // 움직임이 이 이하면 "탭"
-const DRAG_THRESHOLD = 12;    // 이 이상이면 "드래그"
-const LONG_PRESS_MS = 500;    // 길게누름(엔터) 판정
-const DOUBLE_TAP_MS = 350;    // 더블클릭 판정 시간 (전역)
+const DRAG_THRESHOLD = 8;    // 이 이상이면 "드래그"
+const LONG_PRESS_MS = 350;    // 길게누름(엔터) 판정
+const DOUBLE_TAP_MS = 250;    // 더블클릭 판정 시간 (전역)
 
 class HaromaKeyboard {
     constructor(options) {
